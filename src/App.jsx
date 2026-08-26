@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as api from "./api.js";
+import { CAR_ART_PATHS } from "./carArt.js";
 import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
@@ -191,126 +192,27 @@ function TextInput({ value, onChange, placeholder }) {
    Car diagram — front / roof / rear / both sides, tap to drop a pin
 ----------------------------------------------------------------*/
 const CANVAS_W = 640;
-const CANVAS_H = 812;
+const CANVAS_H = 665;
 
+// The source artwork (CAR_ART_PATHS) contains two logical drawings in its own
+// 792x612 coordinate space: a plan/top view (front+roof+rear are one
+// continuous outline, since that's genuinely how a car looks from above) and
+// a single side profile. We crop both out with nested <svg viewBox> elements
+// and reuse the side profile twice (mirrored for the other side) rather than
+// needing two separate side drawings.
+const TOP_CROP = { vbX: 133, vbY: 93, vbW: 530, vbH: 172 };
+const SIDE_CROP = { vbX: 133, vbY: 350, vbW: 530, vbH: 172 };
+
+// Hit-regions for tapping/placing pins. front/roof/rear all render from the
+// same TOP_CROP artwork (one continuous shape) — they're just x-thirds of it,
+// split roughly where the bonnet/glass/boot areas fall in the source art.
 const PANELS = {
-  front: { x: 65, y: 20, w: 170, h: 228, vbW: 380, vbH: 260 },
-  roof: { x: 255, y: 20, w: 130, h: 228, vbW: 320, vbH: 561 },
-  rear: { x: 405, y: 20, w: 170, h: 228, vbW: 380, vbH: 260 },
-  left: { x: 20, y: 268, w: 600, h: 252, vbW: 620, vbH: 260 },
-  right: { x: 20, y: 540, w: 600, h: 252, vbW: 620, vbH: 260 },
+  front: { x: 20, y: 20, w: 189, h: 195 },
+  roof: { x: 209, y: 20, w: 221, h: 195 },
+  rear: { x: 430, y: 20, w: 190, h: 195 },
+  left: { x: 20, y: 235, w: 600, h: 195 },
+  right: { x: 20, y: 450, w: 600, h: 195 },
 };
-
-function panelArtBox(p) {
-  const scale = p.w / p.vbW;
-  const artH = p.vbH * scale;
-  const offsetY = (p.h - artH) / 2;
-  return { scale, offsetY };
-}
-
-function FrontArt() {
-  return (
-    <>
-      <line x1="10" y1="222" x2="370" y2="222" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="4,4" />
-      <path d="M70,208 L64,160 C60,120 74,80 102,58 C118,44 130,36 150,32 C165,29 215,29 230,32 C250,36 262,44 278,58 C306,80 320,120 316,160 L310,208 C310,216 302,222 292,222 L88,222 C78,222 70,216 70,208 Z" fill="#ffffff" stroke="#0B2545" strokeWidth="3" strokeLinejoin="round" />
-      <path d="M150,32 C155,26 225,26 230,32" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M108,64 L272,64 L250,106 L130,106 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M78,140 C78,126 90,116 106,116 C122,116 132,128 130,144 C128,158 114,166 98,164 C84,162 78,152 78,140 Z" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M302,140 C302,126 290,116 274,116 C258,116 248,128 250,144 C252,158 266,166 282,164 C296,162 302,152 302,140 Z" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="140" y="122" width="100" height="52" rx="8" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="140" y1="138" x2="240" y2="138" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="140" y1="154" x2="240" y2="154" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="190" cy="148" r="8" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="150" y="188" width="80" height="20" rx="6" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M75,182 L305,182" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M72,196 L308,196" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="100" cy="196" r="8" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="280" cy="196" r="8" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M46,206 L70,206 L70,222 L54,222 C46,222 42,216 44,206 Z" fill="#cfd4db" stroke="#0B2545" strokeWidth="2" />
-      <path d="M334,206 L310,206 L310,222 L326,222 C334,222 338,216 336,206 Z" fill="#cfd4db" stroke="#0B2545" strokeWidth="2" />
-      <text x="190" y="245" fontSize="17" fill="#0B2545" textAnchor="middle" fontWeight="600">FRONT</text>
-    </>
-  );
-}
-
-function RearArt() {
-  return (
-    <>
-      <line x1="10" y1="222" x2="370" y2="222" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="4,4" />
-      <path d="M70,208 L64,160 C60,120 74,80 102,58 C118,44 130,36 150,32 C165,29 215,29 230,32 C250,36 262,44 278,58 C306,80 320,120 316,160 L310,208 C310,216 302,222 292,222 L88,222 C78,222 70,216 70,208 Z" fill="#ffffff" stroke="#0B2545" strokeWidth="3" strokeLinejoin="round" />
-      <path d="M150,32 C155,26 225,26 230,32" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M116,64 L264,64 L246,104 L134,104 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M66,120 C64,112 70,104 82,102 L100,102 C110,104 114,114 112,128 L108,158 C106,168 96,172 84,168 C74,164 68,144 66,120 Z" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M314,120 C316,112 310,104 298,102 L280,102 C270,104 266,114 268,128 L272,158 C274,168 284,172 296,168 C306,164 312,144 314,120 Z" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="128" y="112" width="124" height="66" rx="8" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="190" y1="112" x2="190" y2="178" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="190" cy="140" r="7" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M75,186 L305,186" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M72,200 L308,200" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="150" y="188" width="80" height="18" rx="2" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="100" cy="196" r="7" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="280" cy="196" r="7" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="86" y="206" width="24" height="10" rx="3" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="270" y="206" width="24" height="10" rx="3" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M46,206 L70,206 L70,222 L54,222 C46,222 42,216 44,206 Z" fill="#cfd4db" stroke="#0B2545" strokeWidth="2" />
-      <path d="M334,206 L310,206 L310,222 L326,222 C334,222 338,216 336,206 Z" fill="#cfd4db" stroke="#0B2545" strokeWidth="2" />
-      <text x="190" y="245" fontSize="17" fill="#0B2545" textAnchor="middle" fontWeight="600">REAR</text>
-    </>
-  );
-}
-
-function RoofArt() {
-  return (
-    <>
-      <path d="M160,14 C185,14 202,20 210,34 C218,48 222,66 222,86 L222,118 C238,120 250,128 253,142 L256,178 C257,188 257,198 253,206 C249,213 240,216 228,217 L228,343 C240,344 249,347 253,354 C257,362 257,372 256,382 L253,418 C250,432 238,440 222,442 L222,474 C222,494 218,512 210,526 C202,540 185,546 160,546 C135,546 118,540 110,526 C102,512 98,494 98,474 L98,442 C82,440 70,432 67,418 L64,382 C63,372 63,362 67,354 C71,347 80,344 92,343 L92,217 C80,216 71,213 67,206 C63,198 63,188 64,178 L67,142 C70,128 82,120 98,118 L98,86 C98,66 102,48 110,34 C118,20 135,14 160,14 Z" fill="#ffffff" stroke="#0B2545" strokeWidth="3" strokeLinejoin="round" />
-      <path d="M120,110 L200,110 L192,148 L128,148 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M124,410 L196,410 L188,374 L132,374 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="120" y="148" width="80" height="226" rx="14" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="160" y1="150" x2="160" y2="372" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="3,5" />
-      <line x1="160" y1="24" x2="160" y2="104" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="160" y1="416" x2="160" y2="536" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M118,20 C130,16 190,16 202,20" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M118,540 C130,544 190,544 202,540" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="98" y1="248" x2="222" y2="248" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="4,4" />
-      <line x1="98" y1="312" x2="222" y2="312" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="4,4" />
-      <path d="M96,140 L78,130 L82,158 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M224,140 L242,130 L238,158 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <rect x="76" y="150" width="18" height="58" rx="5" fill="#333333" stroke="#0B2545" strokeWidth="1" />
-      <rect x="226" y="150" width="18" height="58" rx="5" fill="#333333" stroke="#0B2545" strokeWidth="1" />
-      <rect x="76" y="352" width="18" height="58" rx="5" fill="#333333" stroke="#0B2545" strokeWidth="1" />
-      <rect x="226" y="352" width="18" height="58" rx="5" fill="#333333" stroke="#0B2545" strokeWidth="1" />
-      <text x="160" y="46" fontSize="15" fill="#0B2545" textAnchor="middle" fontWeight="600">FRONT</text>
-      <text x="160" y="524" fontSize="15" fill="#0B2545" textAnchor="middle" fontWeight="600">REAR</text>
-    </>
-  );
-}
-
-function SideArt({ mirrored, label }) {
-  return (
-    <g transform={mirrored ? "translate(620,0) scale(-1,1)" : undefined}>
-      <line x1="10" y1="216" x2="610" y2="216" stroke="#0B2545" strokeWidth="1.6" strokeDasharray="4,4" />
-      <path d="M48,188 C44,178 48,170 58,167 L88,163 C97,134 120,109 150,97 C170,89 182,80 192,66 C206,48 227,38 253,37 L358,37 C390,39 416,54 432,80 C442,96 449,112 453,129 L488,150 C498,154 505,161 507,170 L556,174 C570,176 579,184 581,195 C582,200 578,204 570,204 L548,204 L548,178 L86,178 L86,204 L64,204 C54,204 48,198 48,188 Z" fill="#ffffff" stroke="#0B2545" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-      <path d="M150,97 C168,90 180,82 192,68 L212,68 L198,158 L158,158 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="192" y1="68" x2="200" y2="158" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M212,68 L358,68" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M358,68 L378,68 C398,72 414,86 424,106 L410,158 L364,158 Z" fill="#eef1f5" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="424" y1="106" x2="410" y2="158" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="286" y1="70" x2="284" y2="204" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="228" y1="140" x2="252" y2="140" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="328" y1="140" x2="352" y2="140" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="218" y1="158" x2="218" y2="118" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="356" y1="158" x2="356" y2="118" stroke="#0B2545" strokeWidth="1.6" />
-      <line x1="86" y1="178" x2="548" y2="178" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M58,167 L58,178" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <path d="M556,174 L556,178" fill="none" stroke="#0B2545" strokeWidth="1.6" />
-      <circle cx="152" cy="192" r="34" fill="#333333" stroke="#0B2545" strokeWidth="2" />
-      <circle cx="152" cy="192" r="16" fill="#cfd4db" stroke="#0B2545" strokeWidth="1.4" />
-      <circle cx="492" cy="192" r="34" fill="#333333" stroke="#0B2545" strokeWidth="2" />
-      <circle cx="492" cy="192" r="16" fill="#cfd4db" stroke="#0B2545" strokeWidth="1.4" />
-      <text x="310" y="240" fontSize="17" fill="#0B2545" textAnchor="middle" fontWeight="600" transform={mirrored ? "translate(620,0) scale(-1,1)" : undefined}>{label}</text>
-    </g>
-  );
-}
 
 function panelLabel(key) {
   return { front: "Front", rear: "Rear", roof: "Roof", left: "Left / Driver Side", right: "Right / Passenger Side" }[key];
@@ -348,26 +250,51 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
         className="w-full h-auto rounded-xl"
         style={{ background: "white", border: `1px solid ${LINE}`, cursor: readOnly ? "default" : "crosshair" }}
       >
-        {Object.entries(PANELS).map(([key, p]) => {
-          const { scale, offsetY } = panelArtBox(p);
-          const Art = key === "front" ? FrontArt : key === "rear" ? RearArt : key === "roof" ? RoofArt : null;
-          if (Art) {
-            return (
-              <g key={key} transform={`translate(${p.x},${p.y + offsetY}) scale(${scale})`}>
-                <Art />
-              </g>
-            );
-          }
-          return (
-            <g key={key} transform={`translate(${p.x},${p.y + offsetY}) scale(${scale})`}>
-              <SideArt mirrored={key === "right"} label={key === "left" ? "LEFT / DRIVER SIDE" : "RIGHT / PASSENGER SIDE"} />
-            </g>
-          );
-        })}
+        <defs>
+          <g id="atd-car-art" fill={NAVY} dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }} />
+        </defs>
+
+        {/* front+roof+rear plan view — one continuous drawing spanning all three hit-regions */}
+        <svg
+          x={PANELS.front.x}
+          y={PANELS.front.y}
+          width={PANELS.rear.x + PANELS.rear.w - PANELS.front.x}
+          height={PANELS.front.h}
+          viewBox={`${TOP_CROP.vbX} ${TOP_CROP.vbY} ${TOP_CROP.vbW} ${TOP_CROP.vbH}`}
+        >
+          <use href="#atd-car-art" />
+        </svg>
+
+        {/* left / driver side */}
+        <svg
+          x={PANELS.left.x}
+          y={PANELS.left.y}
+          width={PANELS.left.w}
+          height={PANELS.left.h}
+          viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
+        >
+          <use href="#atd-car-art" />
+        </svg>
+
+        {/* right / passenger side — same artwork, mirrored */}
+        <g transform={`translate(${PANELS.right.x + PANELS.right.w}, ${PANELS.right.y}) scale(-1,1)`}>
+          <svg
+            x="0"
+            y="0"
+            width={PANELS.right.w}
+            height={PANELS.right.h}
+            viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
+          >
+            <use href="#atd-car-art" />
+          </svg>
+        </g>
 
         {/* section dividers */}
-        <line x1="0" y1="258" x2={CANVAS_W} y2="258" stroke={LINE} strokeWidth="2" />
-        <line x1="0" y1="530" x2={CANVAS_W} y2="530" stroke={LINE} strokeWidth="2" />
+        <line x1="0" y1={PANELS.left.y - 8} x2={CANVAS_W} y2={PANELS.left.y - 8} stroke={LINE} strokeWidth="2" />
+        <line x1="0" y1={PANELS.right.y - 8} x2={CANVAS_W} y2={PANELS.right.y - 8} stroke={LINE} strokeWidth="2" />
+
+        <text x={PANELS.left.x} y={PANELS.left.y - 8 + 12} fontSize="11" fill={STEEL} fontWeight="600">LEFT / DRIVER SIDE</text>
+        <text x={PANELS.right.x} y={PANELS.right.y - 8 + 12} fontSize="11" fill={STEEL} fontWeight="600">RIGHT / PASSENGER SIDE</text>
 
         {pins.map((pin) => {
           const p = PANELS[pin.panel];
