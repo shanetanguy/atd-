@@ -288,8 +288,13 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           width={PANELS.rear.x + PANELS.rear.w - PANELS.front.x}
           height={PANELS.front.h}
           viewBox={`${TOP_CROP.vbX} ${TOP_CROP.vbY} ${TOP_CROP.vbW} ${TOP_CROP.vbH}`}
+          overflow="hidden"
         >
           <use href="#atd-car-art" />
+          {/* small tie-down bracket icons from the source art sit right at this crop's
+              bottom corners, inside the crop bounds — mask them off */}
+          <rect x={TOP_CROP.vbX} y="195" width="60" height="82" fill="white" />
+          <rect x={TOP_CROP.vbX + TOP_CROP.vbW - 60} y="195" width="60" height="82" fill="white" />
         </svg>
 
         {/* left / driver side */}
@@ -299,8 +304,12 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           width={PANELS.left.w}
           height={PANELS.left.h}
           viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
+          overflow="hidden"
         >
           <use href="#atd-car-art" />
+          {/* same bracket icons, mirrored position at this crop's top corners */}
+          <rect x={SIDE_CROP.vbX} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
+          <rect x={SIDE_CROP.vbX + SIDE_CROP.vbW - 50} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
         </svg>
 
         {/* right / passenger side — same artwork, mirrored */}
@@ -311,8 +320,11 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
             width={PANELS.right.w}
             height={PANELS.right.h}
             viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
+            overflow="hidden"
           >
             <use href="#atd-car-art" />
+            <rect x={SIDE_CROP.vbX} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
+            <rect x={SIDE_CROP.vbX + SIDE_CROP.vbW - 50} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
           </svg>
         </g>
 
