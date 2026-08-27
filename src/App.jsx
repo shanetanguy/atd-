@@ -194,79 +194,40 @@ function TextInput({ value, onChange, placeholder }) {
 const CANVAS_W = 640;
 const CANVAS_H = 762;
 
-// The source artwork (CAR_ART_PATHS) contains a side-profile drawing in its
-// own 792x612 coordinate space, which we crop out with a nested <svg viewBox>
-// and reuse mirrored for the other side. Its plan/top view reads too much
-// like a squashed side profile to use as-is, so the top view below is a
-// hand-drawn plan view instead, matched to the same navy line-art style.
+// The source artwork (CAR_ART_PATHS) contains two logical drawings in its own
+// 792x612 coordinate space: a plan view (front+roof+rear as one continuous
+// outline) and a single side profile. We crop both out with nested
+// <svg viewBox> elements and reuse the side profile twice (mirrored for the
+// other side) rather than needing two separate side drawings. Matching the
+// reference image's layout, the two side views bracket the plan view: left
+// side on top, the plan view in the middle, right side on the bottom.
+const TOP_CROP = { vbX: 133, vbY: 93, vbW: 530, vbH: 172 };
 const SIDE_CROP = { vbX: 133, vbY: 350, vbW: 530, vbH: 172 };
-
-// Hand-drawn plan (bird's-eye) view — native 400x130, deliberately shaped
-// unlike the side profile (rounded body, wheels at all four corners, thin
-// windshield/rear-window slivers) so it can't be mistaken for a third side view.
-function PlanViewArt() {
-  return (
-    <>
-      <path
-        d="M20,65 C20,46 35,30 62,24 C90,18 120,15 150,15 L250,15 C280,15 310,18 338,24 C365,30 380,46 380,65 C380,84 365,100 338,106 C310,112 280,115 250,115 L150,115 C120,115 90,112 62,106 C35,100 20,84 20,65 Z"
-        fill="#ffffff"
-        stroke={NAVY}
-        strokeWidth="3"
-        strokeLinejoin="round"
-      />
-      <line x1="20" y1="65" x2="380" y2="65" stroke={NAVY} strokeWidth="1.2" strokeDasharray="4,4" />
-      <line x1="200" y1="15" x2="200" y2="115" stroke={NAVY} strokeWidth="1.2" strokeDasharray="4,4" />
-      <rect x="150" y="22" width="100" height="86" rx="10" fill="#eef1f5" stroke={NAVY} strokeWidth="1.6" />
-      <path d="M128,30 L150,22 L150,108 L128,100 Z" fill="#eef1f5" stroke={NAVY} strokeWidth="1.6" />
-      <path d="M250,22 L272,30 L272,100 L250,108 Z" fill="#eef1f5" stroke={NAVY} strokeWidth="1.6" />
-      <rect x="118" y="17" width="12" height="15" rx="3" fill="#cfd4db" stroke={NAVY} strokeWidth="1.4" />
-      <rect x="118" y="98" width="12" height="15" rx="3" fill="#cfd4db" stroke={NAVY} strokeWidth="1.4" />
-      <circle cx="95" cy="28" r="15" fill="#333333" stroke={NAVY} strokeWidth="2" />
-      <circle cx="95" cy="28" r="7" fill="#cfd4db" stroke={NAVY} strokeWidth="1.2" />
-      <circle cx="95" cy="102" r="15" fill="#333333" stroke={NAVY} strokeWidth="2" />
-      <circle cx="95" cy="102" r="7" fill="#cfd4db" stroke={NAVY} strokeWidth="1.2" />
-      <circle cx="305" cy="28" r="15" fill="#333333" stroke={NAVY} strokeWidth="2" />
-      <circle cx="305" cy="28" r="7" fill="#cfd4db" stroke={NAVY} strokeWidth="1.2" />
-      <circle cx="305" cy="102" r="15" fill="#333333" stroke={NAVY} strokeWidth="2" />
-      <circle cx="305" cy="102" r="7" fill="#cfd4db" stroke={NAVY} strokeWidth="1.2" />
-      <text x="60" y="72" fontSize="11" fill={STEEL} textAnchor="middle" fontWeight="600">FRONT</text>
-      <text x="340" y="72" fontSize="11" fill={STEEL} textAnchor="middle" fontWeight="600">REAR</text>
-    </>
-  );
-}
 
 // Each view sits in its own bordered card. Cards are laid out as
 // { x, y, w, h } for the border rect; content (label + artwork) is inset
 // from that by CARD_PAD.
 const CARD_PAD = 14;
 const CARDS = {
-  top: { x: 14, y: 14, w: 612, h: 234 },
-  left: { x: 14, y: 264, w: 612, h: 234 },
+  left: { x: 14, y: 14, w: 612, h: 234 },
+  plan: { x: 14, y: 264, w: 612, h: 234 },
   right: { x: 14, y: 514, w: 612, h: 234 },
 };
 
 // Hit-regions for tapping/placing pins. front/roof/rear all render from the
 // same TOP_CROP artwork (one continuous shape) — they're just x-thirds of it,
 // split roughly where the bonnet/glass/boot areas fall in the source art.
-const topArtY = CARDS.top.y + CARD_PAD + 16;
-const topArtH = CARDS.top.h - CARD_PAD * 2 - 16;
-const topArtX = CARDS.top.x + CARD_PAD;
-const topArtW = CARDS.top.w - CARD_PAD * 2;
 const leftArtY = CARDS.left.y + CARD_PAD + 16;
 const rightArtY = CARDS.right.y + CARD_PAD + 16;
-
-// PlanViewArt is hand-drawn at a native 400x130 size — scale it to fit the
-// top card's content box, centering any leftover space.
-const PLAN_ART_W = 400;
-const PLAN_ART_H = 130;
-const topArtScale = Math.min(topArtW / PLAN_ART_W, topArtH / PLAN_ART_H);
-const topArtOffsetX = topArtX + (topArtW - PLAN_ART_W * topArtScale) / 2;
-const topArtOffsetY = topArtY + (topArtH - PLAN_ART_H * topArtScale) / 2;
+const planArtY = CARDS.plan.y + CARD_PAD + 16;
+const planArtH = CARDS.plan.h - CARD_PAD * 2 - 16;
+const planArtX = CARDS.plan.x + CARD_PAD;
+const planArtW = CARDS.plan.w - CARD_PAD * 2;
 
 const PANELS = {
-  front: { x: topArtX, y: topArtY, w: topArtW * 0.315, h: topArtH },
-  roof: { x: topArtX + topArtW * 0.315, y: topArtY, w: topArtW * 0.368, h: topArtH },
-  rear: { x: topArtX + topArtW * 0.683, y: topArtY, w: topArtW * 0.317, h: topArtH },
+  front: { x: planArtX, y: planArtY, w: planArtW * 0.315, h: planArtH },
+  roof: { x: planArtX + planArtW * 0.315, y: planArtY, w: planArtW * 0.368, h: planArtH },
+  rear: { x: planArtX + planArtW * 0.683, y: planArtY, w: planArtW * 0.317, h: planArtH },
   left: { x: CARDS.left.x + CARD_PAD, y: leftArtY, w: CARDS.left.w - CARD_PAD * 2, h: CARDS.left.h - CARD_PAD * 2 - 16 },
   right: { x: CARDS.right.x + CARD_PAD, y: rightArtY, w: CARDS.right.w - CARD_PAD * 2, h: CARDS.right.h - CARD_PAD * 2 - 16 },
 };
@@ -316,14 +277,20 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
         ))}
 
-        <text x={topArtX} y={CARDS.top.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">FRONT / ROOF / REAR</text>
         <text x={PANELS.left.x} y={CARDS.left.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">LEFT / DRIVER SIDE</text>
+        <text x={planArtX} y={CARDS.plan.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">FRONT / ROOF / REAR</text>
         <text x={PANELS.right.x} y={CARDS.right.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">RIGHT / PASSENGER SIDE</text>
 
-        {/* front+roof+rear plan view — one hand-drawn shape spanning all three hit-regions */}
-        <g transform={`translate(${topArtOffsetX}, ${topArtOffsetY}) scale(${topArtScale})`}>
-          <PlanViewArt />
-        </g>
+        {/* front+roof+rear plan view — one continuous drawing spanning all three hit-regions */}
+        <svg
+          x={PANELS.front.x}
+          y={PANELS.front.y}
+          width={PANELS.rear.x + PANELS.rear.w - PANELS.front.x}
+          height={PANELS.front.h}
+          viewBox={`${TOP_CROP.vbX} ${TOP_CROP.vbY} ${TOP_CROP.vbW} ${TOP_CROP.vbH}`}
+        >
+          <use href="#atd-car-art" />
+        </svg>
 
         {/* left / driver side */}
         <svg
