@@ -192,7 +192,7 @@ function TextInput({ value, onChange, placeholder }) {
    Car diagram — front / roof / rear / both sides, tap to drop a pin
 ----------------------------------------------------------------*/
 const CANVAS_W = 640;
-const CANVAS_H = 665;
+const CANVAS_H = 762;
 
 // The source artwork (CAR_ART_PATHS) contains two logical drawings in its own
 // 792x612 coordinate space: a plan/top view (front+roof+rear are one
@@ -203,15 +203,32 @@ const CANVAS_H = 665;
 const TOP_CROP = { vbX: 133, vbY: 93, vbW: 530, vbH: 172 };
 const SIDE_CROP = { vbX: 133, vbY: 350, vbW: 530, vbH: 172 };
 
+// Each view sits in its own bordered card. Cards are laid out as
+// { x, y, w, h } for the border rect; content (label + artwork) is inset
+// from that by CARD_PAD.
+const CARD_PAD = 14;
+const CARDS = {
+  top: { x: 14, y: 14, w: 612, h: 234 },
+  left: { x: 14, y: 264, w: 612, h: 234 },
+  right: { x: 14, y: 514, w: 612, h: 234 },
+};
+
 // Hit-regions for tapping/placing pins. front/roof/rear all render from the
 // same TOP_CROP artwork (one continuous shape) — they're just x-thirds of it,
 // split roughly where the bonnet/glass/boot areas fall in the source art.
+const topArtY = CARDS.top.y + CARD_PAD + 16;
+const topArtH = CARDS.top.h - CARD_PAD * 2 - 16;
+const topArtX = CARDS.top.x + CARD_PAD;
+const topArtW = CARDS.top.w - CARD_PAD * 2;
+const leftArtY = CARDS.left.y + CARD_PAD + 16;
+const rightArtY = CARDS.right.y + CARD_PAD + 16;
+
 const PANELS = {
-  front: { x: 20, y: 20, w: 189, h: 195 },
-  roof: { x: 209, y: 20, w: 221, h: 195 },
-  rear: { x: 430, y: 20, w: 190, h: 195 },
-  left: { x: 20, y: 235, w: 600, h: 195 },
-  right: { x: 20, y: 450, w: 600, h: 195 },
+  front: { x: topArtX, y: topArtY, w: topArtW * 0.315, h: topArtH },
+  roof: { x: topArtX + topArtW * 0.315, y: topArtY, w: topArtW * 0.368, h: topArtH },
+  rear: { x: topArtX + topArtW * 0.683, y: topArtY, w: topArtW * 0.317, h: topArtH },
+  left: { x: CARDS.left.x + CARD_PAD, y: leftArtY, w: CARDS.left.w - CARD_PAD * 2, h: CARDS.left.h - CARD_PAD * 2 - 16 },
+  right: { x: CARDS.right.x + CARD_PAD, y: rightArtY, w: CARDS.right.w - CARD_PAD * 2, h: CARDS.right.h - CARD_PAD * 2 - 16 },
 };
 
 function panelLabel(key) {
@@ -254,6 +271,15 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           <g id="atd-car-art" fill={NAVY} dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }} />
         </defs>
 
+        {/* one bordered card per view */}
+        {Object.values(CARDS).map((c, i) => (
+          <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
+        ))}
+
+        <text x={topArtX} y={CARDS.top.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">FRONT / ROOF / REAR</text>
+        <text x={PANELS.left.x} y={CARDS.left.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">LEFT / DRIVER SIDE</text>
+        <text x={PANELS.right.x} y={CARDS.right.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">RIGHT / PASSENGER SIDE</text>
+
         {/* front+roof+rear plan view — one continuous drawing spanning all three hit-regions */}
         <svg
           x={PANELS.front.x}
@@ -288,13 +314,6 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
             <use href="#atd-car-art" />
           </svg>
         </g>
-
-        {/* section dividers */}
-        <line x1="0" y1={PANELS.left.y - 8} x2={CANVAS_W} y2={PANELS.left.y - 8} stroke={LINE} strokeWidth="2" />
-        <line x1="0" y1={PANELS.right.y - 8} x2={CANVAS_W} y2={PANELS.right.y - 8} stroke={LINE} strokeWidth="2" />
-
-        <text x={PANELS.left.x} y={PANELS.left.y - 8 + 12} fontSize="11" fill={STEEL} fontWeight="600">LEFT / DRIVER SIDE</text>
-        <text x={PANELS.right.x} y={PANELS.right.y - 8 + 12} fontSize="11" fill={STEEL} fontWeight="600">RIGHT / PASSENGER SIDE</text>
 
         {pins.map((pin) => {
           const p = PANELS[pin.panel];
