@@ -35,12 +35,72 @@ const FUEL_LEVELS = ["0%", "25%", "50%", "75%", "100%"];
 const CLIENT_TYPES = ["Individual", "Trustee-Held"];
 const REPORT_TYPES = ["Intake", "Routine", "Release"];
 const OKISSUE = ["OK", "Issue"];
-const CHECKLIST_ITEMS = [
-  "Wheels & tyres — condition / flat-spotting",
-  "Battery voltage / conditioner status",
-  "Alarm / immobiliser functioning",
-  "Fluid leaks / drip tray check",
+const SPARE_WHEEL_OPTIONS = ["Y", "N", "Space-Saver"];
+const V5_OPTIONS = ["Y", "N", "Held by Trustee"];
+const CABLE_OPTIONS = ["Y", "N", "N/A"];
+
+// Condition checklist differs by report type, matching ATD's own Intake and
+// Handover/Release templates. Routine (no separate template) keeps the
+// original lightweight periodic-check list.
+const CHECKLIST_ITEMS = {
+  Intake: [
+    "Exterior paintwork — scratches, chips, marks",
+    "Wheels & tyres — condition, damage, flat-spotting",
+    "Glass & mirrors",
+    "PPF / ceramic coating condition (if applied)",
+    "Interior — upholstery, dash, odour",
+    "Battery voltage / condition",
+    "Fluid levels (oil, coolant, brake)",
+    "Undertray / underbody — leaks, corrosion",
+    "Alarm / immobiliser functioning",
+    "Warning lights on dash",
+    "Existing damage / pre-existing marks logged",
+  ],
+  Release: [
+    "Exterior paintwork — scratches, chips, marks",
+    "Wheels & tyres — condition, damage",
+    "Glass & mirrors",
+    "Interior — upholstery, dash",
+    "Any damage or marks noted on release",
+  ],
+  Routine: [
+    "Wheels & tyres — condition / flat-spotting",
+    "Battery voltage / conditioner status",
+    "Alarm / immobiliser functioning",
+    "Fluid leaks / drip tray check",
+  ],
+};
+
+const TYRE_POSITIONS = [
+  { key: "frontLeft", label: "Front Left" },
+  { key: "frontRight", label: "Front Right" },
+  { key: "rearLeft", label: "Rear Left" },
+  { key: "rearRight", label: "Rear Right" },
+  { key: "spare", label: "Spare (if applicable)" },
 ];
+
+function blankTyres() {
+  return Object.fromEntries(TYRE_POSITIONS.map((p) => [p.key, { factory: "", reading: "", reset: false }]));
+}
+
+function blankItems() {
+  return {
+    keysCount: "",
+    serviceBook: "",
+    spareWheel: "",
+    lockingWheelNut: "",
+    ownersManual: "",
+    parcelShelf: "",
+    v5Doc: "",
+    chargingCable: "",
+    insuranceConfirmed: "",
+    motValidTo: "",
+    conditionerMakeModel: "",
+    batteryConditionerRemoved: "",
+    ownConditionerReturned: "",
+    otherItems: "",
+  };
+}
 
 function genId(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -63,17 +123,52 @@ function blankReport() {
     date: todayISO(),
     inspectedBy: "",
     clientName: "",
+    trustCompany: "",
+    contactEmail: "",
+    contactPhone: "",
+    beneficialOwner: "",
     make: "",
     reg: "",
+    vin: "",
+    colour: "",
+    year: "",
+    odometer: "",
+    vatSitus: "",
     bay: "",
     battery: "",
     ownConditioner: "",
     coverFitted: "",
     handbrake: "",
     fuel: "",
+    // Intake only
+    receivedFrom: "",
+    handedOverBy: "",
+    // Release only
+    releasedTo: "",
+    recipientName: "",
+    idChecked: "",
+    transportCo: "",
+    driverName: "",
+    collectionRef: "",
+    items: blankItems(),
+    tyres: blankTyres(),
     checklist: {},
     pins: [],
     clientResponse: null,
+  };
+}
+
+// Reports saved before the Intake/Release fields existed won't have items/
+// tyres (or may have partial ones) — fill in defaults so the editor and
+// client view never hit an undefined field on an older report.
+function normalizeReport(r) {
+  return {
+    ...blankReport(),
+    ...r,
+    items: { ...blankItems(), ...(r.items || {}) },
+    tyres: { ...blankTyres(), ...(r.tyres || {}) },
+    checklist: r.checklist || {},
+    pins: r.pins || [],
   };
 }
 
@@ -585,6 +680,13 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
   const set = (k, v) => setReport((r) => ({ ...r, [k]: v }));
   const setChecklist = (item, v) =>
     setReport((r) => ({ ...r, checklist: { ...r.checklist, [item]: v } }));
+  const setItem = (k, v) => setReport((r) => ({ ...r, items: { ...r.items, [k]: v } }));
+  const setTyre = (pos, field, v) =>
+    setReport((r) => ({ ...r, tyres: { ...r.tyres, [pos]: { ...r.tyres[pos], [field]: v } } }));
+
+  const isIntake = report.reportType === "Intake";
+  const isRelease = report.reportType === "Release";
+  const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
 
   return (
     <div className="pb-28">
@@ -614,14 +716,90 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
             <Field label="MAKE & MODEL">
               <TextInput value={report.make} onChange={(v) => set("make", v)} placeholder="e.g. Porsche 911" />
             </Field>
-            <Field label="REGISTRATION">
+            <Field label="REGISTRATION / VIN">
               <TextInput value={report.reg} onChange={(v) => set("reg", v)} placeholder="e.g. GY 1234" />
             </Field>
           </div>
-          <Field label="STORAGE BAY">
-            <TextInput value={report.bay} onChange={(v) => set("bay", v)} placeholder="e.g. B14" />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="COLOUR">
+              <TextInput value={report.colour} onChange={(v) => set("colour", v)} placeholder="e.g. Guards Red" />
+            </Field>
+            <Field label="YEAR">
+              <TextInput value={report.year} onChange={(v) => set("year", v)} placeholder="e.g. 2022" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="ODOMETER">
+              <TextInput value={report.odometer} onChange={(v) => set("odometer", v)} placeholder="e.g. 12,400 mi" />
+            </Field>
+            <Field label="STORAGE BAY">
+              <TextInput value={report.bay} onChange={(v) => set("bay", v)} placeholder="e.g. B14" />
+            </Field>
+          </div>
+          {isIntake && (
+            <Field label="VAT / SITUS STATUS">
+              <TextInput value={report.vatSitus} onChange={(v) => set("vatSitus", v)} placeholder="e.g. VAT paid, EU situs" />
+            </Field>
+          )}
         </Section>
+
+        {report.reportType !== "Routine" && (
+          <Section title="Trustee / Client Details">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="TRUST / FIDUCIARY COMPANY">
+                <TextInput value={report.trustCompany} onChange={(v) => set("trustCompany", v)} placeholder="If applicable" />
+              </Field>
+              <Field label="CONTACT EMAIL / PHONE">
+                <TextInput value={report.contactEmail} onChange={(v) => set("contactEmail", v)} placeholder="Client contact" />
+              </Field>
+            </div>
+            {isIntake && (
+              <Field label="BENEFICIAL OWNER (IF DISCLOSED)">
+                <TextInput value={report.beneficialOwner} onChange={(v) => set("beneficialOwner", v)} placeholder="Optional" />
+              </Field>
+            )}
+          </Section>
+        )}
+
+        {isIntake && (
+          <Section title="Intake Parties">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="RECEIVED FROM">
+                <TextInput value={report.receivedFrom} onChange={(v) => set("receivedFrom", v)} placeholder="Owner / Trustee / Agent" />
+              </Field>
+              <Field label="HANDED OVER BY">
+                <TextInput value={report.handedOverBy} onChange={(v) => set("handedOverBy", v)} placeholder="Name" />
+              </Field>
+            </div>
+          </Section>
+        )}
+
+        {isRelease && (
+          <Section title="Release Parties">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="RELEASED TO">
+                <TextInput value={report.releasedTo} onChange={(v) => set("releasedTo", v)} placeholder="Owner / Trustee / Agent / Transport Co." />
+              </Field>
+              <Field label="RECIPIENT NAME">
+                <TextInput value={report.recipientName} onChange={(v) => set("recipientName", v)} placeholder="Name" />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="ID CHECKED"><Select value={report.idChecked} onChange={(v) => set("idChecked", v)} options={YN} /></Field>
+              <Field label="TRANSPORT / LOGISTICS CO.">
+                <TextInput value={report.transportCo} onChange={(v) => set("transportCo", v)} placeholder="If applicable" />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="DRIVER NAME">
+                <TextInput value={report.driverName} onChange={(v) => set("driverName", v)} placeholder="If applicable" />
+              </Field>
+              <Field label="COLLECTION REF. / PO NO.">
+                <TextInput value={report.collectionRef} onChange={(v) => set("collectionRef", v)} placeholder="Optional" />
+              </Field>
+            </div>
+          </Section>
+        )}
 
         <Section title="Storage Environment">
           <div className="grid grid-cols-2 gap-3">
@@ -635,8 +813,92 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
           </Field>
         </Section>
 
-        <Section title="Quick Checklist">
-          {CHECKLIST_ITEMS.map((item) => (
+        {(isIntake || isRelease) && (
+          <Section title={isIntake ? "Documents & Items Received" : "Documents & Items Returned"}>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={isIntake ? "KEYS / FOBS RECEIVED" : "KEYS / FOBS RETURNED"}>
+                <TextInput value={report.items.keysCount} onChange={(v) => setItem("keysCount", v)} placeholder="No." />
+              </Field>
+              <Field label={isIntake ? "SERVICE BOOK RECEIVED" : "SERVICE BOOK RETURNED"}>
+                <Select value={report.items.serviceBook} onChange={(v) => setItem("serviceBook", v)} options={YN} />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="SPARE WHEEL PRESENT"><Select value={report.items.spareWheel} onChange={(v) => setItem("spareWheel", v)} options={SPARE_WHEEL_OPTIONS} /></Field>
+              <Field label="LOCKING WHEEL NUT KEY"><Select value={report.items.lockingWheelNut} onChange={(v) => setItem("lockingWheelNut", v)} options={YN} /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="OWNER'S MANUAL PRESENT"><Select value={report.items.ownersManual} onChange={(v) => setItem("ownersManual", v)} options={YN} /></Field>
+              <Field label="PARCEL SHELF / BOOT COVER"><Select value={report.items.parcelShelf} onChange={(v) => setItem("parcelShelf", v)} options={YN} /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="V5 / REGISTRATION DOC"><Select value={report.items.v5Doc} onChange={(v) => setItem("v5Doc", v)} options={V5_OPTIONS} /></Field>
+              <Field label="CHARGING CABLE (EV/HYBRID)"><Select value={report.items.chargingCable} onChange={(v) => setItem("chargingCable", v)} options={CABLE_OPTIONS} /></Field>
+            </div>
+            {isIntake ? (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="INSURANCE CONFIRMED"><Select value={report.items.insuranceConfirmed} onChange={(v) => setItem("insuranceConfirmed", v)} options={YN} /></Field>
+                <Field label="MOT / INSPECTION VALID TO">
+                  <TextInput value={report.items.motValidTo} onChange={(v) => setItem("motValidTo", v)} placeholder="YYYY-MM-DD" />
+                </Field>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="BATTERY CONDITIONER REMOVED"><Select value={report.items.batteryConditionerRemoved} onChange={(v) => setItem("batteryConditionerRemoved", v)} options={YN} /></Field>
+                <Field label="INSURANCE CONFIRMED"><Select value={report.items.insuranceConfirmed} onChange={(v) => setItem("insuranceConfirmed", v)} options={YN} /></Field>
+              </div>
+            )}
+            {isIntake ? (
+              <Field label="CONDITIONER MAKE / MODEL">
+                <TextInput value={report.items.conditionerMakeModel} onChange={(v) => setItem("conditionerMakeModel", v)} placeholder="If own conditioner supplied" />
+              </Field>
+            ) : (
+              <Field label="OWN CONDITIONER RETURNED"><Select value={report.items.ownConditionerReturned} onChange={(v) => setItem("ownConditionerReturned", v)} options={CABLE_OPTIONS} /></Field>
+            )}
+            <Field label={isIntake ? "OTHER ITEMS RECEIVED" : "OTHER ITEMS HANDED OVER"}>
+              <textarea
+                value={report.items.otherItems}
+                onChange={(e) => setItem("otherItems", e.target.value)}
+                rows={2}
+                placeholder="Car cover, tools, jack, tow eye, etc."
+                className={inputCls}
+                style={inputStyle}
+              />
+            </Field>
+          </Section>
+        )}
+
+        {(isIntake || isRelease) && (
+          <Section title={isIntake ? "Factory Tyre Pressure Settings" : "Tyre Pressures — Reset to Factory"}>
+            <div className="text-xs mb-3" style={{ color: STEEL }}>
+              {isIntake
+                ? "Record manufacturer factory settings on intake — use as the reference point when resetting pressures for release."
+                : "Reference the factory settings recorded on the intake report. Confirm each position has been reset before release."}
+            </div>
+            {TYRE_POSITIONS.map((p) => (
+              <div key={p.key} className="mb-3">
+                <div className="text-xs font-semibold mb-1.5" style={{ color: INK }}>{p.label}</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <TextInput value={report.tyres[p.key].factory} onChange={(v) => setTyre(p.key, "factory", v)} placeholder="Factory PSI/BAR" />
+                  <TextInput
+                    value={report.tyres[p.key].reading}
+                    onChange={(v) => setTyre(p.key, "reading", v)}
+                    placeholder={isIntake ? "Set on intake" : "Current PSI/BAR"}
+                  />
+                  {isRelease && (
+                    <label className="flex items-center gap-2 text-xs rounded-lg border px-3" style={{ borderColor: LINE, color: STEEL }}>
+                      <input type="checkbox" checked={report.tyres[p.key].reset} onChange={(e) => setTyre(p.key, "reset", e.target.checked)} />
+                      Reset to factory
+                    </label>
+                  )}
+                </div>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        <Section title="Condition Checklist">
+          {checklistItems.map((item) => (
             <div key={item} className="flex items-center justify-between py-2 border-b last:border-0" style={{ borderColor: LINE }}>
               <div className="text-sm pr-3" style={{ color: INK }}>{item}</div>
               <div className="w-28 shrink-0">
@@ -645,6 +907,12 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
             </div>
           ))}
         </Section>
+
+        {isRelease && (
+          <div className="rounded-lg p-3 mb-5 text-xs" style={{ background: `${GOLD}15`, color: STEEL }}>
+            By signing below, the recipient confirms they have inspected the vehicle and agree it is being released in the condition recorded on this report. ATD Automotive Detailing accepts no responsibility for any damage, fault, or missing item not noted above at the time of release.
+          </div>
+        )}
 
         <Section title="Damage Diagram">
           <button
@@ -941,6 +1209,11 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           <div className="text-[10px] font-semibold tracking-wide" style={{ color: STEEL }}>{report.reportType?.toUpperCase()} REPORT</div>
           <div className="font-semibold text-lg" style={{ color: NAVY }}>{report.make || "Vehicle"} {report.reg && `· ${report.reg}`}</div>
           <div className="text-sm mt-0.5" style={{ color: STEEL }}>{report.date} · Ref {report.id} · Bay {report.bay || "—"}</div>
+          {(report.colour || report.year || report.odometer) && (
+            <div className="text-sm mt-0.5" style={{ color: STEEL }}>
+              {[report.colour, report.year, report.odometer && `${report.odometer} odo`].filter(Boolean).join(" · ")}
+            </div>
+          )}
         </div>
 
         <Section title="Damage Diagram">
@@ -969,6 +1242,28 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           </div>
         </Section>
 
+        {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).some((item) => report.checklist[item]) && (
+          <Section title="Condition Checklist">
+            <div className="space-y-1.5">
+              {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).map((item) => {
+                const v = report.checklist[item];
+                if (!v) return null;
+                return (
+                  <div key={item} className="flex items-center justify-between gap-3 bg-white rounded-lg border px-3 py-2" style={{ borderColor: LINE }}>
+                    <div className="text-sm" style={{ color: INK }}>{item}</div>
+                    <span
+                      className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                      style={{ background: v === "OK" ? "#E3F1E7" : "#FBE7E5", color: v === "OK" ? OK_GREEN : ISSUE_RED }}
+                    >
+                      {v}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
         <Section title="Condition Summary">
           <div className="grid grid-cols-2 gap-2 text-sm">
             <SummaryRow label="Battery conditioner" value={report.battery} />
@@ -979,6 +1274,48 @@ function ClientViewScreen({ report, onBack, onRespond }) {
             <SummaryRow label="Inspected by" value={report.inspectedBy} />
           </div>
         </Section>
+
+        {report.reportType === "Intake" && (
+          <Section title="Intake Details">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <SummaryRow label="Received from" value={report.receivedFrom} />
+              <SummaryRow label="Handed over by" value={report.handedOverBy} />
+              <SummaryRow label="Keys / fobs received" value={report.items.keysCount} />
+              <SummaryRow label="Service book" value={report.items.serviceBook} />
+              <SummaryRow label="Spare wheel" value={report.items.spareWheel} />
+              <SummaryRow label="V5 / registration doc" value={report.items.v5Doc} />
+              <SummaryRow label="Insurance confirmed" value={report.items.insuranceConfirmed} />
+              <SummaryRow label="MOT valid to" value={report.items.motValidTo} />
+            </div>
+            {report.items.otherItems && (
+              <div className="mt-2 text-sm bg-white rounded-lg border p-2.5" style={{ borderColor: LINE, color: INK }}>
+                <span className="font-semibold">Other items: </span>{report.items.otherItems}
+              </div>
+            )}
+          </Section>
+        )}
+
+        {report.reportType === "Release" && (
+          <Section title="Release Details">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <SummaryRow label="Released to" value={report.releasedTo} />
+              <SummaryRow label="Recipient" value={report.recipientName} />
+              <SummaryRow label="ID checked" value={report.idChecked} />
+              <SummaryRow label="Keys / fobs returned" value={report.items.keysCount} />
+              <SummaryRow label="Service book" value={report.items.serviceBook} />
+              <SummaryRow label="Battery conditioner removed" value={report.items.batteryConditionerRemoved} />
+              <SummaryRow label="Insurance confirmed" value={report.items.insuranceConfirmed} />
+            </div>
+            {report.items.otherItems && (
+              <div className="mt-2 text-sm bg-white rounded-lg border p-2.5" style={{ borderColor: LINE, color: INK }}>
+                <span className="font-semibold">Other items: </span>{report.items.otherItems}
+              </div>
+            )}
+            <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: `${GOLD}15`, color: STEEL }}>
+              By confirming below, you agree the vehicle is being released in the condition recorded on this report. ATD Automotive Detailing accepts no responsibility for any damage, fault, or missing item not noted above at the time of release.
+            </div>
+          </Section>
+        )}
 
         {alreadyResponded ? (
           <div
@@ -1088,7 +1425,7 @@ export default function App() {
       if (match) {
         try {
           const r = await api.fetchReport(match[1].toUpperCase());
-          setClientReport(r);
+          setClientReport(normalizeReport(r));
           setView("clientView");
         } catch (e) {
           setClientAccessError("That report link doesn't look right. Enter your code below.");
@@ -1126,7 +1463,7 @@ export default function App() {
   const openExisting = async (id) => {
     try {
       const r = await api.fetchReport(id);
-      setReport(r);
+      setReport(normalizeReport(r));
       setView("edit");
     } catch (e) {}
   };
@@ -1211,7 +1548,7 @@ export default function App() {
         {view === "clientAccess" && (
           <ClientAccessScreen
             onBack={() => setView(authed ? "dashboard" : "login")}
-            onFound={(r) => { setClientReport(r); setView("clientView"); }}
+            onFound={(r) => { setClientReport(normalizeReport(r)); setView("clientView"); }}
             initialError={clientAccessError}
           />
         )}
@@ -1222,7 +1559,7 @@ export default function App() {
             onBack={() => setView("clientAccess")}
             onRespond={async (resp) => {
               const updated = await api.respondToReport(clientReport.id, resp);
-              setClientReport(updated);
+              setClientReport(normalizeReport(updated));
             }}
           />
         )}
