@@ -8,7 +8,10 @@ let db;
 
 export function getDb() {
   if (db) return db;
-  db = new Database(path.join(__dirname, "atd.db"));
+  // DATA_DIR points at a mounted persistent disk in production (e.g. Render);
+  // without it the database would be wiped on every redeploy/restart.
+  const dataDir = process.env.DATA_DIR || __dirname;
+  db = new Database(path.join(dataDir, "atd.db"));
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS reports (
