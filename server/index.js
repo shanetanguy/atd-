@@ -78,8 +78,12 @@ app.post("/api/reports/:id/respond", (req, res) => {
   const row = db.prepare("SELECT data FROM reports WHERE id = ?").get(req.params.id.toUpperCase());
   if (!row) return res.status(404).json({ error: "Not found" });
   const report = JSON.parse(row.data);
-  const { decision, name, comment } = req.body || {};
-  if (!["confirmed", "disputed"].includes(decision) || typeof name !== "string" || !name.trim()) {
+  const { decision, name, comment, signature } = req.body || {};
+  if (
+    !["confirmed", "disputed"].includes(decision) ||
+    typeof name !== "string" || !name.trim() ||
+    typeof signature !== "string" || !signature.startsWith("data:image/")
+  ) {
     return res.status(400).json({ error: "Invalid response" });
   }
   report.status = decision;
@@ -87,6 +91,7 @@ app.post("/api/reports/:id/respond", (req, res) => {
     decision,
     name: name.trim(),
     comment: typeof comment === "string" ? comment : "",
+    signature,
     date: new Date().toISOString(),
   };
   db.prepare("UPDATE reports SET data = ?, updated_at = ? WHERE id = ?").run(

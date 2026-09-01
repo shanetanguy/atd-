@@ -34,7 +34,7 @@ const YN = ["Y", "N"];
 const FUEL_LEVELS = ["0%", "25%", "50%", "75%", "100%"];
 const CLIENT_TYPES = ["Individual", "Trustee-Held"];
 const REPORT_TYPES = ["Intake", "Routine", "Release"];
-const OKISSUE = ["OK", "Issue"];
+const CHECKLIST_STATUS = ["OK", "Issue", "Not Checked"];
 const SPARE_WHEEL_OPTIONS = ["Y", "N", "Space-Saver"];
 const V5_OPTIONS = ["Y", "N", "Held by Trustee"];
 const CABLE_OPTIONS = ["Y", "N", "N/A"];
@@ -170,6 +170,15 @@ function normalizeReport(r) {
     checklist: r.checklist || {},
     pins: r.pins || [],
   };
+}
+
+// Checklist entries were originally a plain "OK"/"Issue" string; now they're
+// { status, note }. Reads either shape so older saved reports keep working.
+function checklistEntry(report, item) {
+  const v = report.checklist[item];
+  if (!v) return { status: "", note: "" };
+  if (typeof v === "string") return { status: v, note: "" };
+  return { status: v.status || "", note: v.note || "" };
 }
 
 /* ---------------------------------------------------------------
@@ -678,8 +687,11 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout }) {
 ----------------------------------------------------------------*/
 function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, saving }) {
   const set = (k, v) => setReport((r) => ({ ...r, [k]: v }));
-  const setChecklist = (item, v) =>
-    setReport((r) => ({ ...r, checklist: { ...r.checklist, [item]: v } }));
+  const setChecklistField = (item, field, v) =>
+    setReport((r) => ({
+      ...r,
+      checklist: { ...r.checklist, [item]: { ...checklistEntry(r, item), [field]: v } },
+    }));
   const setItem = (k, v) => setReport((r) => ({ ...r, items: { ...r.items, [k]: v } }));
   const setTyre = (pos, field, v) =>
     setReport((r) => ({ ...r, tyres: { ...r.tyres, [pos]: { ...r.tyres[pos], [field]: v } } }));
@@ -898,14 +910,31 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
         )}
 
         <Section title="Condition Checklist">
-          {checklistItems.map((item) => (
-            <div key={item} className="flex items-center justify-between py-2 border-b last:border-0" style={{ borderColor: LINE }}>
-              <div className="text-sm pr-3" style={{ color: INK }}>{item}</div>
-              <div className="w-28 shrink-0">
-                <Select value={report.checklist[item] || ""} onChange={(v) => setChecklist(item, v)} options={OKISSUE} placeholder="—" />
+          {checklistItems.map((item) => {
+            const entry = checklistEntry(report, item);
+            return (
+              <div key={item} className="py-2.5 border-b last:border-0" style={{ borderColor: LINE }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm pr-1" style={{ color: INK }}>{item}</div>
+                  <div className="w-32 shrink-0">
+                    <Select
+                      value={entry.status}
+                      onChange={(v) => setChecklistField(item, "status", v)}
+                      options={CHECKLIST_STATUS}
+                      placeholder="—"
+                    />
+                  </div>
+                </div>
+                <input
+                  value={entry.note}
+                  onChange={(e) => setChecklistField(item, "note", e.target.value)}
+                  placeholder="Notes — e.g. which warning light, where the scratch is"
+                  className="w-full mt-1.5 rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2"
+                  style={inputStyle}
+                />
               </div>
-            </div>
-          ))}
+            );
+          })}
         </Section>
 
         {isRelease && (
@@ -1183,21 +1212,121 @@ function ClientAccessScreen({ onBack, onFound, initialError = "" }) {
 }
 
 /* ---------------------------------------------------------------
+   Signature pad — draw with mouse, touch, or pen (Pointer Events)
+----------------------------------------------------------------*/
+const SIG_W = 600;
+const SIG_H = 180;
+
+function SignaturePad({ onChange }) {
+  const canvasRef = useRef(null);
+  const drawingRef = useRef(false);
+  const hasDrawnRef = useRef(false);
+  // Chromium can fire a spurious click (detail: 0, stale coordinates) on
+  // whatever's below the canvas right after a pointerup that ends a drag —
+  // here that's the Clear button. Ignore clicks that land within a beat of
+  // finishing a stroke; a real tap on Clear always comes later than that.
+  const lastEndAtRef = useRef(0);
+  const [hasSignature, setHasSignature] = useState(false);
+
+  useEffect(() => {
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = NAVY;
+  }, []);
+
+  const posFromEvent = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
+
+  const start = (e) => {
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext("2d");
+    const { x, y } = posFromEvent(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    drawingRef.current = true;
+  };
+
+  const move = (e) => {
+    if (!drawingRef.current) return;
+    e.preventDefault();
+    const ctx = canvasRef.current.getContext("2d");
+    const { x, y } = posFromEvent(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    if (!hasDrawnRef.current) {
+      hasDrawnRef.current = true;
+      setHasSignature(true);
+    }
+  };
+
+  const end = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    lastEndAtRef.current = Date.now();
+    if (hasDrawnRef.current) onChange(canvasRef.current.toDataURL("image/png"));
+  };
+
+  const clear = () => {
+    if (Date.now() - lastEndAtRef.current < 400) return;
+    const canvas = canvasRef.current;
+    canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+    hasDrawnRef.current = false;
+    setHasSignature(false);
+    onChange(null);
+  };
+
+  return (
+    <div>
+      <div className="relative">
+        <canvas
+          ref={canvasRef}
+          width={SIG_W}
+          height={SIG_H}
+          className="w-full rounded-lg border touch-none"
+          style={{ borderColor: LINE, background: "white", height: 140, touchAction: "none" }}
+          onPointerDown={start}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerLeave={end}
+          onPointerCancel={end}
+        />
+        {!hasSignature && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm pointer-events-none" style={{ color: "#B8B4A8" }}>
+            Sign here
+          </div>
+        )}
+      </div>
+      <button type="button" onClick={clear} className="text-xs mt-1.5 font-medium" style={{ color: STEEL }}>
+        Clear signature
+      </button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Client view — read only, confirm / dispute
 ----------------------------------------------------------------*/
 function ClientViewScreen({ report, onBack, onRespond }) {
   const [decision, setDecision] = useState(null); // 'confirmed' | 'disputed'
   const [name, setName] = useState("");
   const [comment, setComment] = useState("");
+  const [signature, setSignature] = useState(null);
   const [saving, setSaving] = useState(false);
   const [viewPin, setViewPin] = useState(null);
 
   const alreadyResponded = !!report.clientResponse;
 
   const submit = async () => {
-    if (!name.trim() || !decision) return;
+    if (!name.trim() || !decision || !signature) return;
     setSaving(true);
-    await onRespond({ decision, name: name.trim(), comment, date: new Date().toISOString() });
+    await onRespond({ decision, name: name.trim(), comment, signature, date: new Date().toISOString() });
     setSaving(false);
   };
 
@@ -1242,21 +1371,26 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           </div>
         </Section>
 
-        {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).some((item) => report.checklist[item]) && (
+        {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).some((item) => checklistEntry(report, item).status) && (
           <Section title="Condition Checklist">
             <div className="space-y-1.5">
               {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).map((item) => {
-                const v = report.checklist[item];
-                if (!v) return null;
+                const entry = checklistEntry(report, item);
+                if (!entry.status) return null;
+                const statusColor = entry.status === "OK" ? OK_GREEN : entry.status === "Issue" ? ISSUE_RED : STEEL;
+                const statusBg = entry.status === "OK" ? "#E3F1E7" : entry.status === "Issue" ? "#FBE7E5" : "#E8E6DE";
                 return (
-                  <div key={item} className="flex items-center justify-between gap-3 bg-white rounded-lg border px-3 py-2" style={{ borderColor: LINE }}>
-                    <div className="text-sm" style={{ color: INK }}>{item}</div>
-                    <span
-                      className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
-                      style={{ background: v === "OK" ? "#E3F1E7" : "#FBE7E5", color: v === "OK" ? OK_GREEN : ISSUE_RED }}
-                    >
-                      {v}
-                    </span>
+                  <div key={item} className="bg-white rounded-lg border px-3 py-2" style={{ borderColor: LINE }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm" style={{ color: INK }}>{item}</div>
+                      <span
+                        className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                        style={{ background: statusBg, color: statusColor }}
+                      >
+                        {entry.status}
+                      </span>
+                    </div>
+                    {entry.note && <div className="text-xs mt-1" style={{ color: STEEL }}>{entry.note}</div>}
                   </div>
                 );
               })}
@@ -1335,6 +1469,14 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <div className="text-xs mt-1" style={{ color: STEEL }}>
                 {new Date(report.clientResponse.date).toLocaleString()}
               </div>
+              {report.clientResponse.signature && (
+                <img
+                  src={report.clientResponse.signature}
+                  alt="Signature"
+                  className="mt-3 rounded-lg border bg-white"
+                  style={{ borderColor: LINE, maxWidth: 240, height: "auto" }}
+                />
+              )}
             </div>
           </div>
         ) : (
@@ -1379,9 +1521,12 @@ function ClientViewScreen({ report, onBack, onRespond }) {
                 placeholder={decision === "disputed" ? "Tell us what looks wrong" : "Anything you'd like to add"}
               />
             </Field>
+            <Field label="SIGNATURE">
+              <SignaturePad onChange={setSignature} />
+            </Field>
             <button
               onClick={submit}
-              disabled={!name.trim() || !decision || saving}
+              disabled={!name.trim() || !decision || !signature || saving}
               className="w-full rounded-xl py-3.5 font-semibold text-white flex items-center justify-center gap-2 disabled:opacity-40"
               style={{ background: NAVY }}
             >
