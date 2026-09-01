@@ -189,51 +189,51 @@ function TextInput({ value, onChange, placeholder }) {
 }
 
 /* ---------------------------------------------------------------
-   Car diagram — front / roof / rear / both sides, tap to drop a pin
+   Car diagram — the source artwork shown whole, in one box, tap to drop a pin
 ----------------------------------------------------------------*/
 const CANVAS_W = 640;
-const CANVAS_H = 762;
 
-// The source artwork (CAR_ART_PATHS) contains two logical drawings in its own
-// 792x612 coordinate space: a plan view (front+roof+rear as one continuous
-// outline) and a single side profile. We crop both out with nested
-// <svg viewBox> elements and reuse the side profile twice (mirrored for the
-// other side) rather than needing two separate side drawings. Matching the
-// reference image's layout, the two side views bracket the plan view: left
-// side on top, the plan view in the middle, right side on the bottom.
-const TOP_CROP = { vbX: 133, vbY: 93, vbW: 530, vbH: 172 };
-const SIDE_CROP = { vbX: 133, vbY: 350, vbW: 530, vbH: 172 };
-
-// Each view sits in its own bordered card. Cards are laid out as
-// { x, y, w, h } for the border rect; content (label + artwork) is inset
-// from that by CARD_PAD.
+// The source artwork's own coordinate space is 792x612 — show it exactly as
+// delivered, unmodified, in a single card rather than cropping it into pieces.
+const ART_VB = { w: 792, h: 612 };
 const CARD_PAD = 14;
-const CARDS = {
-  left: { x: 14, y: 14, w: 612, h: 234 },
-  plan: { x: 14, y: 264, w: 612, h: 234 },
-  right: { x: 14, y: 514, w: 612, h: 234 },
+const CARD_X = 14;
+const CARD_Y = 14;
+const CARD_W = CANVAS_W - CARD_X * 2;
+const artX = CARD_X + CARD_PAD;
+const artY = CARD_Y + CARD_PAD + 16;
+const artW = CARD_W - CARD_PAD * 2;
+const artScale = artW / ART_VB.w;
+const artH = ART_VB.h * artScale;
+const CARD_H = artH + CARD_PAD * 2 + 16;
+const CANVAS_H = CARD_Y + CARD_H + CARD_Y;
+
+// Hit-regions for tapping/placing pins, defined in the source artwork's own
+// 792x612 coordinates, then converted to canvas coordinates below. front/
+// roof/rear are x-thirds of the plan-view band (one continuous drawing);
+// "side" is the one side-profile drawing the source art contains — the
+// artwork doesn't have a separate left/right pair to mirror, so damage on
+// either side gets marked on this same picture.
+const SOURCE_ZONES = {
+  front: { x: 133, y: 93, w: 167, h: 172 },
+  roof: { x: 300, y: 93, w: 195, h: 172 },
+  rear: { x: 495, y: 93, w: 168, h: 172 },
+  side: { x: 133, y: 350, w: 530, h: 172 },
 };
 
-// Hit-regions for tapping/placing pins. front/roof/rear all render from the
-// same TOP_CROP artwork (one continuous shape) — they're just x-thirds of it,
-// split roughly where the bonnet/glass/boot areas fall in the source art.
-const leftArtY = CARDS.left.y + CARD_PAD + 16;
-const rightArtY = CARDS.right.y + CARD_PAD + 16;
-const planArtY = CARDS.plan.y + CARD_PAD + 16;
-const planArtH = CARDS.plan.h - CARD_PAD * 2 - 16;
-const planArtX = CARDS.plan.x + CARD_PAD;
-const planArtW = CARDS.plan.w - CARD_PAD * 2;
+function toCanvas(zone) {
+  return {
+    x: artX + zone.x * artScale,
+    y: artY + zone.y * artScale,
+    w: zone.w * artScale,
+    h: zone.h * artScale,
+  };
+}
 
-const PANELS = {
-  front: { x: planArtX, y: planArtY, w: planArtW * 0.315, h: planArtH },
-  roof: { x: planArtX + planArtW * 0.315, y: planArtY, w: planArtW * 0.368, h: planArtH },
-  rear: { x: planArtX + planArtW * 0.683, y: planArtY, w: planArtW * 0.317, h: planArtH },
-  left: { x: CARDS.left.x + CARD_PAD, y: leftArtY, w: CARDS.left.w - CARD_PAD * 2, h: CARDS.left.h - CARD_PAD * 2 - 16 },
-  right: { x: CARDS.right.x + CARD_PAD, y: rightArtY, w: CARDS.right.w - CARD_PAD * 2, h: CARDS.right.h - CARD_PAD * 2 - 16 },
-};
+const PANELS = Object.fromEntries(Object.entries(SOURCE_ZONES).map(([k, z]) => [k, toCanvas(z)]));
 
 function panelLabel(key) {
-  return { front: "Front", rear: "Rear", roof: "Roof", left: "Left / Driver Side", right: "Right / Passenger Side" }[key];
+  return { front: "Front", rear: "Rear", roof: "Roof", side: "Side" }[key];
 }
 
 function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
@@ -272,61 +272,13 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           <g id="atd-car-art" fill={NAVY} dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }} />
         </defs>
 
-        {/* one bordered card per view */}
-        {Object.values(CARDS).map((c, i) => (
-          <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
-        ))}
+        <rect x={CARD_X} y={CARD_Y} width={CARD_W} height={CARD_H} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
+        <text x={artX} y={CARD_Y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">VEHICLE DIAGRAM</text>
 
-        <text x={PANELS.left.x} y={CARDS.left.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">LEFT / DRIVER SIDE</text>
-        <text x={planArtX} y={CARDS.plan.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">FRONT / ROOF / REAR</text>
-        <text x={PANELS.right.x} y={CARDS.right.y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">RIGHT / PASSENGER SIDE</text>
-
-        {/* front+roof+rear plan view — one continuous drawing spanning all three hit-regions */}
-        <svg
-          x={PANELS.front.x}
-          y={PANELS.front.y}
-          width={PANELS.rear.x + PANELS.rear.w - PANELS.front.x}
-          height={PANELS.front.h}
-          viewBox={`${TOP_CROP.vbX} ${TOP_CROP.vbY} ${TOP_CROP.vbW} ${TOP_CROP.vbH}`}
-          overflow="hidden"
-        >
+        {/* the whole source artwork, unmodified — no cropping, no mirroring */}
+        <svg x={artX} y={artY} width={artW} height={artH} viewBox={`0 0 ${ART_VB.w} ${ART_VB.h}`} overflow="hidden">
           <use href="#atd-car-art" />
-          {/* small tie-down bracket icons from the source art sit right at this crop's
-              bottom corners, inside the crop bounds — mask them off */}
-          <rect x={TOP_CROP.vbX} y="195" width="60" height="82" fill="white" />
-          <rect x={TOP_CROP.vbX + TOP_CROP.vbW - 60} y="195" width="60" height="82" fill="white" />
         </svg>
-
-        {/* left / driver side */}
-        <svg
-          x={PANELS.left.x}
-          y={PANELS.left.y}
-          width={PANELS.left.w}
-          height={PANELS.left.h}
-          viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
-          overflow="hidden"
-        >
-          <use href="#atd-car-art" />
-          {/* same bracket icons, mirrored position at this crop's top corners */}
-          <rect x={SIDE_CROP.vbX} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
-          <rect x={SIDE_CROP.vbX + SIDE_CROP.vbW - 50} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
-        </svg>
-
-        {/* right / passenger side — same artwork, mirrored */}
-        <g transform={`translate(${PANELS.right.x + PANELS.right.w}, ${PANELS.right.y}) scale(-1,1)`}>
-          <svg
-            x="0"
-            y="0"
-            width={PANELS.right.w}
-            height={PANELS.right.h}
-            viewBox={`${SIDE_CROP.vbX} ${SIDE_CROP.vbY} ${SIDE_CROP.vbW} ${SIDE_CROP.vbH}`}
-            overflow="hidden"
-          >
-            <use href="#atd-car-art" />
-            <rect x={SIDE_CROP.vbX} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
-            <rect x={SIDE_CROP.vbX + SIDE_CROP.vbW - 50} y={SIDE_CROP.vbY} width="50" height="55" fill="white" />
-          </svg>
-        </g>
 
         {pins.map((pin) => {
           const p = PANELS[pin.panel];
@@ -352,7 +304,7 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
       </svg>
       {!readOnly && (
         <div className="text-center text-xs mt-2" style={{ color: STEEL }}>
-          Tap any panel — front, roof, rear, or either side — to mark a point of damage
+          Tap any panel — front, roof, rear, or side — to mark a point of damage
         </div>
       )}
     </div>
