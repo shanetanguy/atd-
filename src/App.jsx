@@ -4,7 +4,7 @@ import { CAR_ART_PATHS } from "./carArt.js";
 import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
-  ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText
+  ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText, Download
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -213,12 +213,12 @@ function resizeImage(file, maxW = 760) {
 function TopBar({ title, onBack, right }) {
   return (
     <div
-      className="flex items-center justify-between px-4 py-3 sticky top-0 z-20"
+      className="flex items-center justify-between px-4 py-3 sticky print:static top-0 z-20"
       style={{ background: NAVY, color: "white" }}
     >
       <div className="flex items-center gap-2 min-w-0">
         {onBack && (
-          <button onClick={onBack} className="p-1 -ml-1 rounded active:bg-white/10">
+          <button onClick={onBack} className="p-1 -ml-1 rounded active:bg-white/10 print:hidden">
             <ChevronLeft size={22} />
           </button>
         )}
@@ -1380,7 +1380,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
                 const statusColor = entry.status === "OK" ? OK_GREEN : entry.status === "Issue" ? ISSUE_RED : STEEL;
                 const statusBg = entry.status === "OK" ? "#E3F1E7" : entry.status === "Issue" ? "#FBE7E5" : "#E8E6DE";
                 return (
-                  <div key={item} className="bg-white rounded-lg border px-3 py-2" style={{ borderColor: LINE }}>
+                  <div key={item} className="bg-white rounded-lg border px-3 py-2 print:break-inside-avoid" style={{ borderColor: LINE }}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-sm" style={{ color: INK }}>{item}</div>
                       <span
@@ -1453,7 +1453,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
 
         {alreadyResponded ? (
           <div
-            className="rounded-xl p-4 flex items-start gap-3"
+            className="rounded-xl p-4 flex items-start gap-3 print:break-inside-avoid"
             style={{ background: report.clientResponse.decision === "confirmed" ? "#E3F1E7" : "#FBE7E5" }}
           >
             {report.clientResponse.decision === "confirmed"
@@ -1479,7 +1479,19 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               )}
             </div>
           </div>
-        ) : (
+        ) : null}
+
+        {alreadyResponded && (
+          <button
+            onClick={() => window.print()}
+            className="w-full mt-4 rounded-xl py-3.5 font-semibold border-2 flex items-center justify-center gap-2 print:hidden"
+            style={{ borderColor: NAVY, color: NAVY }}
+          >
+            <Download size={18} /> Download as PDF
+          </button>
+        )}
+
+        {!alreadyResponded && (
           <Section title="Your Sign-off">
             <div className="text-sm mb-3" style={{ color: INK }}>
               Please review the condition recorded above. By confirming, you agree this is an accurate record and that ATD is not responsible for anything not noted here.
@@ -1542,7 +1554,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
 
 function SummaryRow({ label, value }) {
   return (
-    <div className="bg-white rounded-lg border p-2.5" style={{ borderColor: LINE }}>
+    <div className="bg-white rounded-lg border p-2.5 print:break-inside-avoid" style={{ borderColor: LINE }}>
       <div className="text-[10px] font-semibold" style={{ color: STEEL }}>{label.toUpperCase()}</div>
       <div className="text-sm font-medium" style={{ color: INK }}>{value || "—"}</div>
     </div>
@@ -1645,7 +1657,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: PAPER, fontFamily: "system-ui, -apple-system, sans-serif" }}>
-      <div className="max-w-md mx-auto min-h-screen bg-white shadow-sm" style={{ background: PAPER }}>
+      <div className="max-w-md print:max-w-none mx-auto min-h-screen bg-white shadow-sm print:shadow-none" style={{ background: PAPER }}>
         {view === "login" && (
           <LoginScreen
             onLoggedIn={(idx) => { setIndex(idx); setAuthed(true); setView("dashboard"); }}
