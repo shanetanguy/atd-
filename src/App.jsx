@@ -213,22 +213,21 @@ function resizeImage(file, maxW = 760) {
 ----------------------------------------------------------------*/
 function TopBar({ title, onBack, right }) {
   return (
-    <div
-      className="flex items-center justify-between px-4 py-3 sticky print:static top-0 z-20"
-      style={{ background: NAVY, color: "white" }}
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        {onBack && (
-          <button onClick={onBack} className="p-1 -ml-1 rounded active:bg-white/10 print:hidden">
-            <ChevronLeft size={22} />
-          </button>
-        )}
-        <div className="min-w-0">
-          <img src={atdLogo} alt="ATD Automotive Storage" className="h-6 w-auto mb-0.5 print:h-7" />
-          <div className="font-semibold text-base truncate">{title}</div>
+    <div className="sticky print:static top-0 z-20" style={{ background: NAVY, color: "white" }}>
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-2 pt-3">
+        <div className="flex items-center min-w-[28px]">
+          {onBack && (
+            <button onClick={onBack} className="p-1 rounded active:bg-white/10 print:hidden">
+              <ChevronLeft size={22} />
+            </button>
+          )}
         </div>
+        <div className="flex justify-center">
+          <img src={atdLogo} alt="ATD Automotive Storage" className="h-10 w-auto print:h-12" />
+        </div>
+        <div className="flex items-center justify-end min-w-[28px]">{right}</div>
       </div>
-      {right}
+      <div className="px-4 pb-3 pt-1.5 text-center font-semibold text-base truncate">{title}</div>
     </div>
   );
 }
