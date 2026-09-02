@@ -1,4 +1,5 @@
 const TOKEN_KEY = "atd:staffToken";
+const ROLE_KEY = "atd:staffRole";
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -7,6 +8,15 @@ export function getToken() {
 export function setToken(token) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function getRole() {
+  return localStorage.getItem(ROLE_KEY);
+}
+
+export function setRole(role) {
+  if (role) localStorage.setItem(ROLE_KEY, role);
+  else localStorage.removeItem(ROLE_KEY);
 }
 
 async function request(path, options = {}) {
@@ -20,6 +30,7 @@ async function request(path, options = {}) {
     // Only an authenticated request going stale counts as "session expired" —
     // a 401 on login itself just means the password was wrong.
     setToken(null);
+    setRole(null);
     const err = new Error("Your session has expired. Please sign in again.");
     err.status = 401;
     throw err;
@@ -33,16 +44,18 @@ async function request(path, options = {}) {
 }
 
 export async function login(password) {
-  const { token } = await request("/auth/login", {
+  const { token, role } = await request("/auth/login", {
     method: "POST",
     body: JSON.stringify({ password }),
   });
   setToken(token);
-  return token;
+  setRole(role);
+  return { token, role };
 }
 
 export function logout() {
   setToken(null);
+  setRole(null);
 }
 
 export function fetchIndex() {
@@ -60,6 +73,10 @@ export function saveReportApi(report) {
 export async function uploadPhoto(dataUrl) {
   const { url } = await request("/uploads", { method: "POST", body: JSON.stringify({ dataUrl }) });
   return url;
+}
+
+export function deleteReport(id) {
+  return request(`/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export function respondToReport(id, response) {

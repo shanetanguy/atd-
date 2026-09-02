@@ -555,9 +555,9 @@ function LoginScreen({ onLoggedIn, onViewByCode }) {
     setLoading(true);
     setError("");
     try {
-      await api.login(password);
+      const { role } = await api.login(password);
       const idx = await api.fetchIndex();
-      onLoggedIn(idx);
+      onLoggedIn(idx, role);
     } catch (err) {
       setError(err.message || "Incorrect password");
     } finally {
@@ -614,9 +614,64 @@ function LoginScreen({ onLoggedIn, onViewByCode }) {
 }
 
 /* ---------------------------------------------------------------
+   Generic confirm dialog — used for destructive admin actions
+----------------------------------------------------------------*/
+function ConfirmDialog({ title, message, confirmLabel = "Delete", onConfirm, onCancel, busy }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(11,37,69,0.45)" }}
+      onClick={onCancel}
+    >
+      <div className="bg-white w-full max-w-sm rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="font-semibold text-lg mb-2" style={{ color: NAVY }}>{title}</div>
+        <div className="text-sm mb-5" style={{ color: STEEL }}>{message}</div>
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 rounded-lg py-3 text-sm font-semibold border disabled:opacity-60"
+            style={{ borderColor: LINE, color: NAVY }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex-1 rounded-lg py-3 text-sm font-semibold text-white flex items-center justify-center gap-2 disabled:opacity-60"
+            style={{ background: ISSUE_RED }}
+          >
+            {busy && <Loader2 size={16} className="animate-spin" />}
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Dashboard
 ----------------------------------------------------------------*/
-function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout }) {
+function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout, isAdmin, onDelete }) {
+  const [confirmId, setConfirmId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const confirmTarget = confirmId ? index.find((r) => r.id === confirmId) : null;
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await onDelete(confirmId);
+      setConfirmId(null);
+    } catch (err) {
+      setDeleteError(err.message || "Couldn't delete this inspection. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div>
       <TopBar
@@ -655,6 +710,12 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout }) {
           RECENT REPORTS
         </div>
 
+        {deleteError && (
+          <div className="text-sm mb-3 flex items-start gap-2" style={{ color: ISSUE_RED }}>
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" /> {deleteError}
+          </div>
+        )}
+
         {index.length === 0 && (
           <div className="text-center py-16 rounded-xl border" style={{ borderColor: LINE, color: STEEL }}>
             <ClipboardList size={28} className="mx-auto mb-2 opacity-50" />
@@ -665,28 +726,52 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout }) {
 
         <div className="space-y-2">
           {index.slice().reverse().map((r) => (
-            <button
+            <div
               key={r.id}
-              onClick={() => onOpen(r.id)}
-              className="w-full text-left bg-white rounded-xl p-3.5 border flex items-center justify-between"
+              className="bg-white rounded-xl border flex items-stretch"
               style={{ borderColor: LINE }}
             >
-              <div className="min-w-0">
-                <div className="font-semibold text-sm truncate" style={{ color: INK }}>
-                  {r.make || "Untitled vehicle"} {r.reg ? `· ${r.reg}` : ""}
+              <button
+                onClick={() => onOpen(r.id)}
+                className="flex-1 min-w-0 text-left p-3.5 flex items-center justify-between"
+              >
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm truncate" style={{ color: INK }}>
+                    {r.make || "Untitled vehicle"} {r.reg ? `· ${r.reg}` : ""}
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: STEEL }}>
+                    {r.reportType} · {r.date} · ref {r.id}
+                  </div>
                 </div>
-                <div className="text-xs mt-0.5" style={{ color: STEEL }}>
-                  {r.reportType} · {r.date} · ref {r.id}
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <StatusChip status={r.status} />
+                  <ChevronRight size={16} style={{ color: STEEL }} />
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0 ml-2">
-                <StatusChip status={r.status} />
-                <ChevronRight size={16} style={{ color: STEEL }} />
-              </div>
-            </button>
+              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setConfirmId(r.id)}
+                  aria-label="Delete inspection"
+                  className="shrink-0 px-3 flex items-center justify-center border-l active:bg-black/5"
+                  style={{ borderColor: LINE, color: ISSUE_RED }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>
+
+      {confirmTarget && (
+        <ConfirmDialog
+          title="Delete this inspection?"
+          message={`${confirmTarget.make || "Untitled vehicle"} ${confirmTarget.reg ? "· " + confirmTarget.reg : ""} (ref ${confirmTarget.id}) will be permanently deleted, including its sign-off link. This can't be undone.`}
+          onCancel={() => setConfirmId(null)}
+          onConfirm={handleDelete}
+          busy={deleting}
+        />
+      )}
     </div>
   );
 }
@@ -1577,6 +1662,7 @@ export default function App() {
   // loading | login | dashboard | edit | diagram | share | clientAccess | clientView
   const [view, setView] = useState("loading");
   const [authed, setAuthed] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [index, setIndex] = useState([]);
   const [report, setReport] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -1605,6 +1691,7 @@ export default function App() {
           const idx = await api.fetchIndex();
           setIndex(idx);
           setAuthed(true);
+          setIsAdmin(api.getRole() === "admin");
           setView("dashboard");
           return;
         } catch (e) {
@@ -1652,8 +1739,14 @@ export default function App() {
   const logout = () => {
     api.logout();
     setAuthed(false);
+    setIsAdmin(false);
     setIndex([]);
     setView("login");
+  };
+
+  const deleteReport = async (id) => {
+    await api.deleteReport(id);
+    await refreshIndex();
   };
 
   if (view === "loading") {
@@ -1669,7 +1762,7 @@ export default function App() {
       <div className="max-w-md print:max-w-none mx-auto min-h-screen bg-white shadow-sm print:shadow-none" style={{ background: PAPER }}>
         {view === "login" && (
           <LoginScreen
-            onLoggedIn={(idx) => { setIndex(idx); setAuthed(true); setView("dashboard"); }}
+            onLoggedIn={(idx, role) => { setIndex(idx); setAuthed(true); setIsAdmin(role === "admin"); setView("dashboard"); }}
             onViewByCode={() => { setClientAccessError(""); setView("clientAccess"); }}
           />
         )}
@@ -1681,6 +1774,8 @@ export default function App() {
             onOpen={openExisting}
             onClientAccess={() => setView("clientAccess")}
             onLogout={logout}
+            isAdmin={isAdmin}
+            onDelete={deleteReport}
           />
         )}
 

@@ -11,12 +11,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 5174;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure-secret-change-me";
 const STAFF_PASSWORD = process.env.ATD_STAFF_PASSWORD || "atd-dev-only";
+// A separate, stronger password for admin sign-in — same login screen, but
+// this password grants the "admin" role instead of "staff", which is what
+// unlocks deleting inspections. No admin password set means deleting is off.
+const ADMIN_PASSWORD = process.env.ATD_ADMIN_PASSWORD || null;
 
 if (!process.env.JWT_SECRET) {
   console.warn("[atd] JWT_SECRET is not set — using an insecure default. Set it before deploying.");
 }
 if (!process.env.ATD_STAFF_PASSWORD) {
   console.warn("[atd] ATD_STAFF_PASSWORD is not set — using an insecure default. Set it before deploying.");
+}
+if (!ADMIN_PASSWORD) {
+  console.warn("[atd] ATD_ADMIN_PASSWORD is not set — admin sign-in (needed to delete inspections) is disabled.");
 }
 
 const db = getDb();
@@ -39,13 +46,23 @@ function requireStaff(req, res, next) {
   }
 }
 
+function requireAdmin(req, res, next) {
+  requireStaff(req, res, () => {
+    if (req.staff.role !== "admin") return res.status(403).json({ error: "Admin access required" });
+    next();
+  });
+}
+
 app.post("/api/auth/login", (req, res) => {
   const { password } = req.body || {};
-  if (typeof password !== "string" || password.length === 0 || password !== STAFF_PASSWORD) {
-    return res.status(401).json({ error: "Incorrect password" });
+  let role = null;
+  if (typeof password === "string" && password.length > 0) {
+    if (ADMIN_PASSWORD && password === ADMIN_PASSWORD) role = "admin";
+    else if (password === STAFF_PASSWORD) role = "staff";
   }
-  const token = jwt.sign({ role: "staff" }, JWT_SECRET, { expiresIn: "12h" });
-  res.json({ token });
+  if (!role) return res.status(401).json({ error: "Incorrect password" });
+  const token = jwt.sign({ role }, JWT_SECRET, { expiresIn: "12h" });
+  res.json({ token, role });
 });
 
 // Staff-only: resize happens client-side; this just persists the result to R2
@@ -92,6 +109,13 @@ app.post("/api/reports", requireStaff, (req, res) => {
      ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
   ).run(report.id, JSON.stringify(report), now, now);
   res.json(report);
+});
+
+// Admin-only: permanently removes an inspection.
+app.delete("/api/reports/:id", requireAdmin, (req, res) => {
+  const info = db.prepare("DELETE FROM reports WHERE id = ?").run(req.params.id.toUpperCase());
+  if (info.changes === 0) return res.status(404).json({ error: "Not found" });
+  res.status(204).end();
 });
 
 // Public: the client's confirm/dispute sign-off. No staff auth — the report id is the capability.
