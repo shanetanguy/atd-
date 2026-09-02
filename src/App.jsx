@@ -2,10 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as api from "./api.js";
 import { CAR_ART_PATHS } from "./carArt.js";
 import atdLogo from "./assets/atd-logo.png";
+import interiorArt from "./assets/interior-diagram.jpg";
 import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
-  ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText, Download
+  ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText, Download,
+  Armchair
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -155,6 +157,7 @@ function blankReport() {
     tyres: blankTyres(),
     checklist: {},
     pins: [],
+    interiorPins: [],
     clientResponse: null,
   };
 }
@@ -170,6 +173,7 @@ function normalizeReport(r) {
     tyres: { ...blankTyres(), ...(r.tyres || {}) },
     checklist: r.checklist || {},
     pins: r.pins || [],
+    interiorPins: r.interiorPins || [],
   };
 }
 
@@ -410,6 +414,91 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
       {!readOnly && (
         <div className="text-center text-xs mt-2" style={{ color: STEEL }}>
           Tap any panel — front, roof, rear, or side — to mark a point of damage
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Interior diagram — a single reference photo, tap anywhere on it
+   to drop a pin. Unlike the exterior diagram there's no natural set
+   of panels to zone-hit against, so this is just one full-image box.
+----------------------------------------------------------------*/
+const INTERIOR_IMG = { w: 1800, h: 1051 };
+const iCardPad = 14;
+const iCardX = 14;
+const iCardY = 14;
+const iCardW = CANVAS_W - iCardX * 2;
+const interiorArtX = iCardX + iCardPad;
+const interiorArtY = iCardY + iCardPad + 16;
+const interiorArtW = iCardW - iCardPad * 2;
+const interiorArtScale = interiorArtW / INTERIOR_IMG.w;
+const interiorArtH = INTERIOR_IMG.h * interiorArtScale;
+const iCardH = interiorArtH + iCardPad * 2 + 16;
+const INTERIOR_CANVAS_H = iCardY + iCardH + iCardY;
+
+function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
+  const svgRef = useRef(null);
+
+  const handleTap = (e) => {
+    if (readOnly) return;
+    const svg = svgRef.current;
+    const rect = svg.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const px = ((clientX - rect.left) / rect.width) * CANVAS_W;
+    const py = ((clientY - rect.top) / rect.height) * INTERIOR_CANVAS_H;
+
+    if (px < interiorArtX || px > interiorArtX + interiorArtW || py < interiorArtY || py > interiorArtY + interiorArtH) return;
+    const x = ((px - interiorArtX) / interiorArtW) * 100;
+    const y = ((py - interiorArtY) / interiorArtH) * 100;
+    onAddPin(x, y);
+  };
+
+  return (
+    <div className="relative select-none" style={{ touchAction: "manipulation" }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${CANVAS_W} ${INTERIOR_CANVAS_H}`}
+        onClick={handleTap}
+        className="w-full h-auto rounded-xl"
+        style={{ background: "white", border: `1px solid ${LINE}`, cursor: readOnly ? "default" : "crosshair" }}
+      >
+        <rect x={iCardX} y={iCardY} width={iCardW} height={iCardH} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
+        <text x={interiorArtX} y={iCardY + iCardPad + 9} fontSize="11" fill={STEEL} fontWeight="600">INTERIOR DIAGRAM</text>
+        <image
+          href={interiorArt}
+          x={interiorArtX}
+          y={interiorArtY}
+          width={interiorArtW}
+          height={interiorArtH}
+          preserveAspectRatio="xMidYMid meet"
+        />
+
+        {pins.map((pin) => {
+          const cx = interiorArtX + (pin.x / 100) * interiorArtW;
+          const cy = interiorArtY + (pin.y / 100) * interiorArtH;
+          const dc = DAMAGE_CODES.find((d) => d.code === pin.code) || DAMAGE_CODES[0];
+          const isActive = activePinId === pin.id;
+          return (
+            <g
+              key={pin.id}
+              transform={`translate(${cx}, ${cy})`}
+              onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
+              style={{ cursor: "pointer" }}
+            >
+              <circle r={isActive ? 14 : 11} fill={dc.color} stroke="white" strokeWidth="2.5" />
+              <text y="4" fontSize="10" fill="white" textAnchor="middle" fontWeight="700">
+                {pin.code}{pin.number}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {!readOnly && (
+        <div className="text-center text-xs mt-2" style={{ color: STEEL }}>
+          Tap anywhere on the interior to mark a point of damage
         </div>
       )}
     </div>
@@ -779,7 +868,7 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout, isAdmin, on
 /* ---------------------------------------------------------------
    Inspection editor
 ----------------------------------------------------------------*/
-function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, saving }) {
+function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInteriorDiagram, onSubmit, saving }) {
   const set = (k, v) => setReport((r) => ({ ...r, [k]: v }));
   const setChecklistField = (item, field, v) =>
     setReport((r) => ({
@@ -1057,6 +1146,27 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onSubmit, 
             <ChevronRight size={18} style={{ color: STEEL }} />
           </button>
         </Section>
+
+        <Section title="Interior Diagram">
+          <button
+            onClick={onOpenInteriorDiagram}
+            className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
+            style={{ borderColor: NAVY }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
+                <Armchair size={22} style={{ color: NAVY }} />
+              </div>
+              <div className="text-left">
+                <div className="font-semibold text-sm" style={{ color: NAVY }}>
+                  {report.interiorPins.length > 0 ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked` : "Mark interior condition"}
+                </div>
+                <div className="text-xs" style={{ color: STEEL }}>Tap the interior to add photos & pins</div>
+              </div>
+            </div>
+            <ChevronRight size={18} style={{ color: STEEL }} />
+          </button>
+        </Section>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t" style={{ borderColor: LINE }}>
@@ -1162,6 +1272,99 @@ function DiagramScreen({ report, setReport, onBack }) {
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate" style={{ color: INK }}>{dc.label} · {panelLabel(p.panel)}</div>
+                      {p.note && <div className="text-xs truncate" style={{ color: STEEL }}>{p.note}</div>}
+                    </div>
+                    {p.photo && <Camera size={14} style={{ color: STEEL }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {activePin && (
+        <PinSheet
+          pin={activePin}
+          onSave={savePin}
+          onDelete={deletePin}
+          onClose={() => setActivePinId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function InteriorDiagramScreen({ report, setReport, onBack }) {
+  const [activePinId, setActivePinId] = useState(null);
+
+  const addPin = (x, y) => {
+    const id = genId(5);
+    const count = (report.interiorPins.filter((p) => p.code === "S").length) + 1;
+    const newPin = { id, x, y, code: "S", number: count, note: "", photo: null };
+    setReport((r) => ({ ...r, interiorPins: [...r.interiorPins, newPin] }));
+    setActivePinId(id);
+  };
+
+  const savePin = (updated) => {
+    setReport((r) => {
+      const codeCount = r.interiorPins.filter((p) => p.code === updated.code && p.id !== updated.id).length;
+      const numbered = { ...updated, number: r.interiorPins.find(p => p.id === updated.id)?.code === updated.code
+        ? updated.number
+        : codeCount + 1 };
+      return { ...r, interiorPins: r.interiorPins.map((p) => (p.id === updated.id ? numbered : p)) };
+    });
+    setActivePinId(null);
+  };
+
+  const deletePin = (id) => {
+    setReport((r) => ({ ...r, interiorPins: r.interiorPins.filter((p) => p.id !== id) }));
+    setActivePinId(null);
+  };
+
+  const activePin = report.interiorPins.find((p) => p.id === activePinId);
+
+  return (
+    <div>
+      <TopBar title="Interior Diagram" onBack={onBack} />
+      <div className="p-4">
+        <InteriorDiagram
+          pins={report.interiorPins}
+          onAddPin={addPin}
+          activePinId={activePinId}
+          onSelectPin={setActivePinId}
+        />
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {DAMAGE_CODES.map((d) => (
+            <div key={d.code} className="flex items-center gap-1.5 text-xs">
+              <span className="w-3 h-3 rounded-full inline-block" style={{ background: d.color }} />
+              <span style={{ color: STEEL }}>{d.code} {d.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {report.interiorPins.length > 0 && (
+          <div className="mt-5">
+            <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>MARKED POINTS</div>
+            <div className="space-y-2">
+              {report.interiorPins.map((p) => {
+                const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setActivePinId(p.id)}
+                    className="w-full flex items-center gap-3 bg-white rounded-lg p-2.5 border text-left"
+                    style={{ borderColor: LINE }}
+                  >
+                    <span
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                      style={{ background: dc.color }}
+                    >
+                      {p.code}{p.number}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate" style={{ color: INK }}>{dc.label} · Interior</div>
                       {p.note && <div className="text-xs truncate" style={{ color: STEEL }}>{p.note}</div>}
                     </div>
                     {p.photo && <Camera size={14} style={{ color: STEEL }} />}
@@ -1414,6 +1617,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
   const [signature, setSignature] = useState(null);
   const [saving, setSaving] = useState(false);
   const [viewPin, setViewPin] = useState(null);
+  const [viewInteriorPin, setViewInteriorPin] = useState(null);
 
   const alreadyResponded = !!report.clientResponse;
 
@@ -1461,6 +1665,32 @@ function ClientViewScreen({ report, onBack, onRespond }) {
             })}
             {report.pins.length === 0 && (
               <div className="text-sm text-center py-4" style={{ color: STEEL }}>No damage marked on this report.</div>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Interior Diagram">
+          <InteriorDiagram pins={report.interiorPins} readOnly activePinId={viewInteriorPin} onSelectPin={setViewInteriorPin} />
+          <div className="mt-3 space-y-2">
+            {report.interiorPins.map((p) => {
+              const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+              return (
+                <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
+                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: dc.color }}>
+                    {p.code}{p.number}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium" style={{ color: INK }}>{dc.label} · Interior</div>
+                    {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
+                    {p.photo && (
+                      <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {report.interiorPins.length === 0 && (
+              <div className="text-sm text-center py-4" style={{ color: STEEL }}>No interior damage marked on this report.</div>
             )}
           </div>
         </Section>
@@ -1659,7 +1889,7 @@ function SummaryRow({ label, value }) {
    Root app
 ----------------------------------------------------------------*/
 export default function App() {
-  // loading | login | dashboard | edit | diagram | share | clientAccess | clientView
+  // loading | login | dashboard | edit | diagram | interiorDiagram | share | clientAccess | clientView
   const [view, setView] = useState("loading");
   const [authed, setAuthed] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -1785,6 +2015,7 @@ export default function App() {
             setReport={setReport}
             onBack={() => setView("dashboard")}
             onOpenDiagram={() => setView("diagram")}
+            onOpenInteriorDiagram={() => setView("interiorDiagram")}
             onSubmit={submitReport}
             saving={saving}
           />
@@ -1792,6 +2023,14 @@ export default function App() {
 
         {view === "diagram" && authed && report && (
           <DiagramScreen
+            report={report}
+            setReport={setReport}
+            onBack={() => setView("edit")}
+          />
+        )}
+
+        {view === "interiorDiagram" && authed && report && (
+          <InteriorDiagramScreen
             report={report}
             setReport={setReport}
             onBack={() => setView("edit")}
