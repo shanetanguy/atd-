@@ -26,12 +26,30 @@ const ISSUE_RED = "#B3261E";
 
 const DAMAGE_CODES = [
   { code: "S", label: "Scratch", color: "#C9932F" },
+  { code: "SC", label: "Scuff", color: "#B8730C" },
+  { code: "RT", label: "Rip / Tear", color: "#B3261E" },
+  { code: "ST", label: "Stained / Soiled", color: "#8E4EC6" },
+  { code: "BM", label: "Broken / Missing Part", color: "#3A3A3A" },
+];
+
+// Codes used before the damage-type rename — not offered in the picker
+// anymore, but kept here so pins saved under the old scheme still show
+// their original label/color instead of silently relabeling as "Scratch".
+const LEGACY_DAMAGE_CODES = [
   { code: "C", label: "Chip", color: "#B8730C" },
   { code: "D", label: "Dent", color: "#B3261E" },
   { code: "P", label: "Paint / Colour Loss", color: "#8E4EC6" },
   { code: "CR", label: "Crack", color: "#1B6FB8" },
   { code: "M", label: "Missing Part", color: "#3A3A3A" },
 ];
+
+function damageCodeFor(code) {
+  return (
+    DAMAGE_CODES.find((d) => d.code === code) ||
+    LEGACY_DAMAGE_CODES.find((d) => d.code === code) ||
+    DAMAGE_CODES[0]
+  );
+}
 
 const YN = ["Y", "N"];
 const FUEL_LEVELS = ["0%", "25%", "50%", "75%", "100%"];
@@ -394,7 +412,7 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           if (!p) return null;
           const cx = p.x + (pin.x / 100) * p.w;
           const cy = p.y + (pin.y / 100) * p.h;
-          const dc = DAMAGE_CODES.find((d) => d.code === pin.code) || DAMAGE_CODES[0];
+          const dc = damageCodeFor(pin.code);
           const isActive = activePinId === pin.id;
           return (
             <g
@@ -479,7 +497,7 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
         {pins.map((pin) => {
           const cx = interiorArtX + (pin.x / 100) * interiorArtW;
           const cy = interiorArtY + (pin.y / 100) * interiorArtH;
-          const dc = DAMAGE_CODES.find((d) => d.code === pin.code) || DAMAGE_CODES[0];
+          const dc = damageCodeFor(pin.code);
           const isActive = activePinId === pin.id;
           return (
             <g
@@ -1256,7 +1274,7 @@ function DiagramScreen({ report, setReport, onBack }) {
             <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>MARKED POINTS</div>
             <div className="space-y-2">
               {report.pins.map((p) => {
-                const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+                const dc = damageCodeFor(p.code);
                 return (
                   <button
                     key={p.id}
@@ -1349,7 +1367,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
             <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>MARKED POINTS</div>
             <div className="space-y-2">
               {report.interiorPins.map((p) => {
-                const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+                const dc = damageCodeFor(p.code);
                 return (
                   <button
                     key={p.id}
@@ -1647,7 +1665,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           <CarDiagram pins={report.pins} readOnly activePinId={viewPin} onSelectPin={setViewPin} />
           <div className="mt-3 space-y-2">
             {report.pins.map((p) => {
-              const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+              const dc = damageCodeFor(p.code);
               return (
                 <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
                   <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: dc.color }}>
@@ -1673,7 +1691,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           <InteriorDiagram pins={report.interiorPins} readOnly activePinId={viewInteriorPin} onSelectPin={setViewInteriorPin} />
           <div className="mt-3 space-y-2">
             {report.interiorPins.map((p) => {
-              const dc = DAMAGE_CODES.find((d) => d.code === p.code) || DAMAGE_CODES[0];
+              const dc = damageCodeFor(p.code);
               return (
                 <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
                   <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: dc.color }}>
