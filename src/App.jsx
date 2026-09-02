@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as api from "./api.js";
 import { CAR_ART_PATHS } from "./carArt.js";
+import atdLogo from "./assets/atd-logo.png";
 import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
@@ -223,7 +224,7 @@ function TopBar({ title, onBack, right }) {
           </button>
         )}
         <div className="min-w-0">
-          <div className="text-[10px] tracking-[0.2em] uppercase" style={{ color: GOLD }}>ATD Automotive Storage</div>
+          <img src={atdLogo} alt="ATD Automotive Storage" className="h-6 w-auto mb-0.5 print:h-7" />
           <div className="font-semibold text-base truncate">{title}</div>
         </div>
       </div>
