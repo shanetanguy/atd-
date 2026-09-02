@@ -12,6 +12,7 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1124.0",
     "better-sqlite3": "^11.8.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",

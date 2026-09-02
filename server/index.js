@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDb } from "./db.js";
+import { uploadPhoto } from "./r2.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +22,10 @@ if (!process.env.ATD_STAFF_PASSWORD) {
 const db = getDb();
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "15mb" })); // reports embed resized photos as data URLs
+// Photos now go through /api/uploads and are stored on R2, so report bodies
+// only carry text fields + photo URLs; the limit just needs headroom for one
+// resized photo upload at a time.
+app.use(express.json({ limit: "6mb" }));
 
 function requireStaff(req, res, next) {
   const auth = req.headers.authorization || "";
@@ -42,6 +46,23 @@ app.post("/api/auth/login", (req, res) => {
   }
   const token = jwt.sign({ role: "staff" }, JWT_SECRET, { expiresIn: "12h" });
   res.json({ token });
+});
+
+// Staff-only: resize happens client-side; this just persists the result to R2
+// and hands back a permanent URL to store on the report instead of the data URL.
+app.post("/api/uploads", requireStaff, async (req, res) => {
+  const { dataUrl } = req.body || {};
+  const match = typeof dataUrl === "string" && dataUrl.match(/^data:(image\/(?:jpeg|png));base64,(.+)$/);
+  if (!match) return res.status(400).json({ error: "Invalid image" });
+  const [, contentType, base64] = match;
+  const buffer = Buffer.from(base64, "base64");
+  try {
+    const url = await uploadPhoto(buffer, contentType);
+    res.json({ url });
+  } catch (e) {
+    console.error("[atd] photo upload failed:", e.message);
+    res.status(500).json({ error: "Photo upload failed" });
+  }
 });
 
 // Staff-only: full list for the dashboard.

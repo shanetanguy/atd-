@@ -424,15 +424,20 @@ function PinSheet({ pin, onSave, onDelete, onClose }) {
   const [note, setNote] = useState(pin.note || "");
   const [photo, setPhoto] = useState(pin.photo || null);
   const [busy, setBusy] = useState(false);
+  const [photoError, setPhotoError] = useState("");
   const fileRef = useRef(null);
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
+    setPhotoError("");
     try {
       const dataUrl = await resizeImage(file);
-      setPhoto(dataUrl);
+      const url = await api.uploadPhoto(dataUrl);
+      setPhoto(url);
+    } catch (err) {
+      setPhotoError(err.message || "Couldn't upload photo. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -499,8 +504,11 @@ function PinSheet({ pin, onSave, onDelete, onClose }) {
             style={{ borderColor: LINE, color: STEEL }}
           >
             {busy ? <Loader2 size={22} className="animate-spin" /> : <Camera size={22} />}
-            {busy ? "Processing…" : "Take or add a photo"}
+            {busy ? "Uploading…" : "Take or add a photo"}
           </button>
+        )}
+        {photoError && (
+          <div className="text-xs -mt-2 mb-3" style={{ color: ISSUE_RED }}>{photoError}</div>
         )}
         <input
           ref={fileRef}

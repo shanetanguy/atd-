@@ -57,6 +57,11 @@ export function saveReportApi(report) {
   return request("/reports", { method: "POST", body: JSON.stringify(report) });
 }
 
+export async function uploadPhoto(dataUrl) {
+  const { url } = await request("/uploads", { method: "POST", body: JSON.stringify({ dataUrl }) });
+  return url;
+}
+
 export function respondToReport(id, response) {
   return request(`/reports/${encodeURIComponent(id)}/respond`, {
     method: "POST",
