@@ -53,6 +53,38 @@ function damageCodeFor(code) {
   );
 }
 
+// Pins carried forward from a vehicle's last intake (returning-car auto
+// populate) are shown distinctly from damage marked fresh this visit, so
+// staff never have to guess which is which: grey = already on file and
+// still open, green = confirmed repaired since, normal damage-code colour
+// = new this visit.
+function pinColor(pin) {
+  if (pin.origin === "carried") return pin.status === "repaired" ? OK_GREEN : STEEL;
+  return damageCodeFor(pin.code).color;
+}
+
+// A green "already on file" hint shown next to an item field on a
+// returning vehicle's new intake — the field itself is still editable
+// (e.g. adding a new key to the count), this just shows what we already
+// had recorded so staff aren't guessing what's expected back.
+function HeldNote({ value }) {
+  if (!value) return null;
+  return <div className="text-[11px] mt-1" style={{ color: OK_GREEN }}>✓ Already held: {value}</div>;
+}
+
+function PinOriginTag({ pin }) {
+  if (pin.origin !== "carried") return null;
+  const repaired = pin.status === "repaired";
+  return (
+    <span
+      className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+      style={{ background: repaired ? "#E3F1E7" : "#E8E6DE", color: repaired ? OK_GREEN : STEEL }}
+    >
+      {repaired ? "Repaired" : "Existing"}
+    </span>
+  );
+}
+
 // Fields that carry over from a vehicle's past reports into a new one for
 // the same car (matched by registration) — identity + client/trustee info
 // that's stable across visits, not visit-specific condition data like
@@ -94,7 +126,6 @@ const CHECKLIST_ITEMS = {
     "Undertray / underbody — leaks, corrosion",
     "Alarm / immobiliser functioning",
     "Warning lights on dash",
-    "Existing damage / pre-existing marks logged",
   ],
   Release: [
     "Exterior paintwork — scratches, chips, marks",
@@ -437,7 +468,6 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
           if (!p) return null;
           const cx = p.x + (pin.x / 100) * p.w;
           const cy = p.y + (pin.y / 100) * p.h;
-          const dc = damageCodeFor(pin.code);
           const isActive = activePinId === pin.id;
           return (
             <g
@@ -446,7 +476,7 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
               onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
               style={{ cursor: "pointer" }}
             >
-              <circle r={isActive ? 14 : 11} fill={dc.color} stroke="white" strokeWidth="2.5" />
+              <circle r={isActive ? 14 : 11} fill={pinColor(pin)} stroke="white" strokeWidth="2.5" />
               <text y="4" fontSize="10" fill="white" textAnchor="middle" fontWeight="700">
                 {pin.code}{pin.number}
               </text>
@@ -522,7 +552,6 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
         {pins.map((pin) => {
           const cx = interiorArtX + (pin.x / 100) * interiorArtW;
           const cy = interiorArtY + (pin.y / 100) * interiorArtH;
-          const dc = damageCodeFor(pin.code);
           const isActive = activePinId === pin.id;
           return (
             <g
@@ -531,7 +560,7 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
               onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
               style={{ cursor: "pointer" }}
             >
-              <circle r={isActive ? 14 : 11} fill={dc.color} stroke="white" strokeWidth="2.5" />
+              <circle r={isActive ? 14 : 11} fill={pinColor(pin)} stroke="white" strokeWidth="2.5" />
               <text y="4" fontSize="10" fill="white" textAnchor="middle" fontWeight="700">
                 {pin.code}{pin.number}
               </text>
@@ -551,13 +580,15 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
 /* ---------------------------------------------------------------
    Pin editor sheet
 ----------------------------------------------------------------*/
-function PinSheet({ pin, onSave, onDelete, onClose }) {
+function PinSheet({ pin, onSave, onDelete, onClose, inspectedBy }) {
   const [code, setCode] = useState(pin.code || "S");
   const [note, setNote] = useState(pin.note || "");
   const [photo, setPhoto] = useState(pin.photo || null);
+  const [status, setStatus] = useState(pin.status || "open");
   const [busy, setBusy] = useState(false);
   const [photoError, setPhotoError] = useState("");
   const fileRef = useRef(null);
+  const isCarried = pin.origin === "carried";
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -586,6 +617,46 @@ function PinSheet({ pin, onSave, onDelete, onClose }) {
           <div className="font-semibold text-lg" style={{ color: NAVY }}>Damage point</div>
           <button onClick={onClose} className="p-1 rounded active:bg-black/5"><X size={20} /></button>
         </div>
+
+        {isCarried && (
+          <div
+            className="mb-4 rounded-lg border p-3"
+            style={{ borderColor: status === "repaired" ? OK_GREEN : LINE }}
+          >
+            <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>RECORDED AT INTAKE</div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStatus("open")}
+                className="flex-1 rounded-lg py-2 text-xs font-semibold border-2"
+                style={{
+                  borderColor: status === "open" ? STEEL : LINE,
+                  background: status === "open" ? `${STEEL}15` : "white",
+                  color: status === "open" ? STEEL : INK,
+                }}
+              >
+                Still present
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatus("repaired")}
+                className="flex-1 rounded-lg py-2 text-xs font-semibold border-2 flex items-center justify-center gap-1"
+                style={{
+                  borderColor: status === "repaired" ? OK_GREEN : LINE,
+                  background: status === "repaired" ? `${OK_GREEN}15` : "white",
+                  color: status === "repaired" ? OK_GREEN : INK,
+                }}
+              >
+                <CheckCircle2 size={14} /> Mark repaired
+              </button>
+            </div>
+            {status === "repaired" && (
+              <div className="text-xs mt-2" style={{ color: OK_GREEN }}>
+                Confirmed repaired{inspectedBy ? ` by ${inspectedBy}` : ""} — shows as a green point on the diagram.
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>TYPE</div>
         <div className="grid grid-cols-3 gap-2 mb-4">
@@ -660,7 +731,19 @@ function PinSheet({ pin, onSave, onDelete, onClose }) {
             <Trash2 size={16} /> Remove
           </button>
           <button
-            onClick={() => onSave({ ...pin, code, note, photo })}
+            onClick={() => onSave({
+              ...pin,
+              code,
+              note,
+              photo,
+              ...(isCarried
+                ? {
+                    status,
+                    repairedBy: status === "repaired" ? (pin.repairedBy || inspectedBy || "") : undefined,
+                    repairedAt: status === "repaired" ? (pin.repairedAt || new Date().toISOString()) : undefined,
+                  }
+                : {}),
+            })}
             className="flex-1 rounded-lg py-3 text-sm font-semibold text-white"
             style={{ background: NAVY }}
           >
@@ -934,6 +1017,10 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const [vehicles, setVehicles] = useState([]);
   const [vehicleNote, setVehicleNote] = useState("");
   const [scanningVin, setScanningVin] = useState(false);
+  // Items this vehicle was recorded holding at its last intake — shown as a
+  // green "already held" note next to the matching field on a returning
+  // car's new intake, so staff see what's expected without re-entering it.
+  const [heldItems, setHeldItems] = useState(null);
   useEffect(() => {
     api.fetchVehicles().then(setVehicles).catch(() => {});
   }, []);
@@ -949,14 +1036,44 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   };
 
   const applyVehicleMatch = (match) => {
+    // A returning car with a prior intake — carry its held items and open
+    // damage forward instead of starting this intake from scratch. Items
+    // are shown as an "already held" reference (handleVehicleFieldBlur's
+    // caller decides isIntake); pins come across as "carried" so the
+    // diagram renders them distinctly from anything marked fresh today.
+    const returning = isIntake && !!match.intakeReportId;
+    if (returning) setHeldItems(match.intakeItems || null);
+
     setReport((r) => {
       const prefill = {};
       for (const field of VEHICLE_PREFILL_FIELDS) {
         if (!r[field] && match[field]) prefill[field] = match[field];
       }
-      return { ...r, ...prefill, vehicleId: match.id };
+      let items = r.items;
+      let pins = r.pins;
+      let interiorPins = r.interiorPins;
+      if (returning) {
+        if (match.intakeItems) {
+          items = { ...r.items };
+          for (const k of Object.keys(items)) {
+            if (!items[k] && match.intakeItems[k]) items[k] = match.intakeItems[k];
+          }
+        }
+        if (r.pins.length === 0 && (match.intakePins || []).length > 0) {
+          pins = match.intakePins.map((p) => ({ ...p, origin: "carried", status: p.status || "open" }));
+        }
+        if (r.interiorPins.length === 0 && (match.intakeInteriorPins || []).length > 0) {
+          interiorPins = match.intakeInteriorPins.map((p) => ({ ...p, origin: "carried", status: p.status || "open" }));
+        }
+      }
+      return { ...r, ...prefill, items, pins, interiorPins, vehicleId: match.id };
     });
-    setVehicleNote(`Loaded existing details for ${match.vin || match.reg} — check them before sending.`);
+
+    setVehicleNote(
+      returning
+        ? `Returning vehicle — loaded its details, held items, and damage from its last intake. Review before sending.`
+        : `Loaded existing details for ${match.vin || match.reg} — check them before sending.`
+    );
   };
 
   const handleVehicleFieldBlur = () => {
@@ -1160,22 +1277,42 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             <div className="grid grid-cols-2 gap-3">
               <Field label={isIntake ? "KEYS / FOBS RECEIVED" : "KEYS / FOBS RETURNED"}>
                 <Select value={report.items.keysCount} onChange={(v) => setItem("keysCount", v)} options={KEYS_OPTIONS} />
+                <HeldNote value={heldItems?.keysCount} />
               </Field>
               <Field label={isIntake ? "SERVICE BOOK RECEIVED" : "SERVICE BOOK RETURNED"}>
                 <Select value={report.items.serviceBook} onChange={(v) => setItem("serviceBook", v)} options={YN} />
+                <HeldNote value={heldItems?.serviceBook} />
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="SPARE WHEEL PRESENT"><Select value={report.items.spareWheel} onChange={(v) => setItem("spareWheel", v)} options={SPARE_WHEEL_OPTIONS} /></Field>
-              <Field label="LOCKING WHEEL NUT KEY"><Select value={report.items.lockingWheelNut} onChange={(v) => setItem("lockingWheelNut", v)} options={YN} /></Field>
+              <Field label="SPARE WHEEL PRESENT">
+                <Select value={report.items.spareWheel} onChange={(v) => setItem("spareWheel", v)} options={SPARE_WHEEL_OPTIONS} />
+                <HeldNote value={heldItems?.spareWheel} />
+              </Field>
+              <Field label="LOCKING WHEEL NUT KEY">
+                <Select value={report.items.lockingWheelNut} onChange={(v) => setItem("lockingWheelNut", v)} options={YN} />
+                <HeldNote value={heldItems?.lockingWheelNut} />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="OWNER'S MANUAL PRESENT"><Select value={report.items.ownersManual} onChange={(v) => setItem("ownersManual", v)} options={YN} /></Field>
-              <Field label="TRACKER FOB QUANTITY"><Select value={report.items.trackerFobQty} onChange={(v) => setItem("trackerFobQty", v)} options={TRACKER_FOB_OPTIONS} /></Field>
+              <Field label="OWNER'S MANUAL PRESENT">
+                <Select value={report.items.ownersManual} onChange={(v) => setItem("ownersManual", v)} options={YN} />
+                <HeldNote value={heldItems?.ownersManual} />
+              </Field>
+              <Field label="TRACKER FOB QUANTITY">
+                <Select value={report.items.trackerFobQty} onChange={(v) => setItem("trackerFobQty", v)} options={TRACKER_FOB_OPTIONS} />
+                <HeldNote value={heldItems?.trackerFobQty} />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="V5 / REGISTRATION DOC"><Select value={report.items.v5Doc} onChange={(v) => setItem("v5Doc", v)} options={V5_OPTIONS} /></Field>
-              <Field label="CHARGING CABLE (EV/HYBRID)"><Select value={report.items.chargingCable} onChange={(v) => setItem("chargingCable", v)} options={CABLE_OPTIONS} /></Field>
+              <Field label="V5 / REGISTRATION DOC">
+                <Select value={report.items.v5Doc} onChange={(v) => setItem("v5Doc", v)} options={V5_OPTIONS} />
+                <HeldNote value={heldItems?.v5Doc} />
+              </Field>
+              <Field label="CHARGING CABLE (EV/HYBRID)">
+                <Select value={report.items.chargingCable} onChange={(v) => setItem("chargingCable", v)} options={CABLE_OPTIONS} />
+                <HeldNote value={heldItems?.chargingCable} />
+              </Field>
             </div>
             {isIntake ? (
               <>
@@ -1428,12 +1565,14 @@ function DiagramScreen({ report, setReport, onBack }) {
                   >
                     <span
                       className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                      style={{ background: dc.color }}
+                      style={{ background: pinColor(p) }}
                     >
                       {p.code}{p.number}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate" style={{ color: INK }}>{dc.label} · {panelLabel(p.panel)}</div>
+                      <div className="text-sm font-medium truncate flex items-center gap-1.5" style={{ color: INK }}>
+                        {dc.label} · {panelLabel(p.panel)} <PinOriginTag pin={p} />
+                      </div>
                       {p.note && <div className="text-xs truncate" style={{ color: STEEL }}>{p.note}</div>}
                     </div>
                     {p.photo && <Camera size={14} style={{ color: STEEL }} />}
@@ -1451,6 +1590,7 @@ function DiagramScreen({ report, setReport, onBack }) {
           onSave={savePin}
           onDelete={deletePin}
           onClose={() => setActivePinId(null)}
+          inspectedBy={report.inspectedBy}
         />
       )}
     </div>
@@ -1521,12 +1661,14 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
                   >
                     <span
                       className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                      style={{ background: dc.color }}
+                      style={{ background: pinColor(p) }}
                     >
                       {p.code}{p.number}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium truncate" style={{ color: INK }}>{dc.label} · Interior</div>
+                      <div className="text-sm font-medium truncate flex items-center gap-1.5" style={{ color: INK }}>
+                        {dc.label} · Interior <PinOriginTag pin={p} />
+                      </div>
                       {p.note && <div className="text-xs truncate" style={{ color: STEEL }}>{p.note}</div>}
                     </div>
                     {p.photo && <Camera size={14} style={{ color: STEEL }} />}
@@ -1544,6 +1686,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
           onSave={savePin}
           onDelete={deletePin}
           onClose={() => setActivePinId(null)}
+          inspectedBy={report.inspectedBy}
         />
       )}
     </div>
@@ -1909,11 +2052,13 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               const dc = damageCodeFor(p.code);
               return (
                 <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
-                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: dc.color }}>
+                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
                     {p.code}{p.number}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium" style={{ color: INK }}>{dc.label} · {panelLabel(p.panel)}</div>
+                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
+                      {dc.label} · {panelLabel(p.panel)} <PinOriginTag pin={p} />
+                    </div>
                     {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
                     {p.photo && (
                       <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
@@ -1935,11 +2080,13 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               const dc = damageCodeFor(p.code);
               return (
                 <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
-                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: dc.color }}>
+                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
                     {p.code}{p.number}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium" style={{ color: INK }}>{dc.label} · Interior</div>
+                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
+                      {dc.label} · Interior <PinOriginTag pin={p} />
+                    </div>
                     {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
                     {p.photo && (
                       <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
