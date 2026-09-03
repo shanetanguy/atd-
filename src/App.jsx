@@ -63,6 +63,24 @@ function pinColor(pin) {
   return damageCodeFor(pin.code).color;
 }
 
+// A carried-over set of pins (returning-car intake, or a release pulling in
+// the vehicle's intake diagram) already makes the array non-empty before
+// anyone's actually looked at it this visit — so "checked" can't just mean
+// "the array isn't empty". It means at least one pin was actually marked
+// today, distinct from what came pre-populated.
+function hasFreshPin(pins) {
+  return pins.some((p) => p.origin !== "carried");
+}
+
+// Status text for a diagram's summary button in the editor — three distinct
+// "nothing new marked" states depending on whether it's carrying pins from
+// intake and whether "no (additional) damage" has been explicitly confirmed.
+function diagramStatusLabel(pins, noDamageConfirmed) {
+  if (hasFreshPin(pins)) return `${pins.length} point${pins.length > 1 ? "s" : ""} marked`;
+  if (pins.length > 0) return noDamageConfirmed ? "No additional damage" : `${pins.length} existing point${pins.length > 1 ? "s" : ""} — not reviewed`;
+  return noDamageConfirmed ? "No damage present" : "Not yet checked";
+}
+
 // A green "already on file" hint shown next to an item field on a
 // returning vehicle's new intake — the field itself is still editable
 // (e.g. adding a new key to the count), this just shows what we already
@@ -1075,6 +1093,7 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout, isAdmin, on
 ----------------------------------------------------------------*/
 function DamageCheckGateModal({
   missingExterior, missingInterior,
+  hasExteriorPins, hasInteriorPins,
   onGoExterior, onGoInterior, onNoExteriorDamage, onNoInteriorDamage,
   onClose,
 }) {
@@ -1116,7 +1135,7 @@ function DamageCheckGateModal({
                 className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white"
                 style={{ background: OK_GREEN }}
               >
-                No damage present
+                {hasExteriorPins ? "No additional damage" : "No damage present"}
               </button>
             </div>
           </div>
@@ -1140,7 +1159,7 @@ function DamageCheckGateModal({
                 className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white"
                 style={{ background: OK_GREEN }}
               >
-                No damage present
+                {hasInteriorPins ? "No additional damage" : "No damage present"}
               </button>
             </div>
           </div>
@@ -1173,12 +1192,15 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const isRoutine = report.reportType === "Routine";
   const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
 
-  // A diagram counts as checked once it has a point marked or has been
-  // explicitly confirmed clean — an empty pins array on its own doesn't
-  // tell "confirmed clean" apart from "never opened", which is exactly
-  // the oversight the pre-send check below exists to catch.
-  const exteriorChecked = isRoutine || report.pins.length > 0 || report.noExteriorDamage;
-  const interiorChecked = isRoutine || report.interiorPins.length > 0 || report.noInteriorDamage;
+  // A diagram counts as checked once it has a point marked THIS VISIT or has
+  // been explicitly confirmed clean — carried-over pins from a returning
+  // car's intake, or a release pulling in the vehicle's intake diagram,
+  // already make the array non-empty before anyone's looked at it today, so
+  // that alone can't count as "checked" (that's exactly the oversight this
+  // check exists to catch — an unreviewed diagram slipping through because
+  // it wasn't technically blank).
+  const exteriorChecked = isRoutine || hasFreshPin(report.pins) || report.noExteriorDamage;
+  const interiorChecked = isRoutine || hasFreshPin(report.interiorPins) || report.noInteriorDamage;
   const [showDamageGate, setShowDamageGate] = useState(false);
 
   // Vehicles this business has already seen — used to auto-fill this report
@@ -1691,11 +1713,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                 </div>
                 <div className="text-left">
                   <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                    {report.pins.length > 0
-                      ? `${report.pins.length} point${report.pins.length > 1 ? "s" : ""} marked`
-                      : report.noExteriorDamage
-                      ? "No damage present"
-                      : "Not yet checked"}
+                    {diagramStatusLabel(report.pins, report.noExteriorDamage)}
                   </div>
                   <div className="text-xs" style={{ color: exteriorChecked ? STEEL : GOLD }}>
                     {exteriorChecked ? "Tap the car to add photos & pins" : "Needs review before sending"}
@@ -1720,11 +1738,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                 </div>
                 <div className="text-left">
                   <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                    {report.interiorPins.length > 0
-                      ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked`
-                      : report.noInteriorDamage
-                      ? "No damage present"
-                      : "Not yet checked"}
+                    {diagramStatusLabel(report.interiorPins, report.noInteriorDamage)}
                   </div>
                   <div className="text-xs" style={{ color: interiorChecked ? STEEL : GOLD }}>
                     {interiorChecked ? "Tap the interior to add photos & pins" : "Needs review before sending"}
@@ -1778,6 +1792,8 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
         <DamageCheckGateModal
           missingExterior={!exteriorChecked}
           missingInterior={!interiorChecked}
+          hasExteriorPins={report.pins.length > 0}
+          hasInteriorPins={report.interiorPins.length > 0}
           onGoExterior={() => { setShowDamageGate(false); onOpenDiagram(); }}
           onGoInterior={() => { setShowDamageGate(false); onOpenInteriorDiagram(); }}
           onNoExteriorDamage={() => {
@@ -1872,7 +1888,7 @@ function DiagramScreen({ report, setReport, onBack }) {
           ))}
         </div>
 
-        {report.pins.length === 0 && (
+        {!hasFreshPin(report.pins) && (
           <button
             onClick={() => setReport((r) => ({ ...r, noExteriorDamage: !r.noExteriorDamage }))}
             className="w-full mt-4 rounded-lg border-2 py-3 text-sm font-semibold flex items-center justify-center gap-2"
@@ -1883,7 +1899,9 @@ function DiagramScreen({ report, setReport, onBack }) {
             }}
           >
             <CheckCircle2 size={16} />
-            {report.noExteriorDamage ? "No damage present — confirmed" : "No damage present"}
+            {report.pins.length > 0
+              ? (report.noExteriorDamage ? "No additional damage — confirmed" : "No additional damage")
+              : (report.noExteriorDamage ? "No damage present — confirmed" : "No damage present")}
           </button>
         )}
 
@@ -1983,7 +2001,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
           ))}
         </div>
 
-        {report.interiorPins.length === 0 && (
+        {!hasFreshPin(report.interiorPins) && (
           <button
             onClick={() => setReport((r) => ({ ...r, noInteriorDamage: !r.noInteriorDamage }))}
             className="w-full mt-4 rounded-lg border-2 py-3 text-sm font-semibold flex items-center justify-center gap-2"
@@ -1994,7 +2012,9 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
             }}
           >
             <CheckCircle2 size={16} />
-            {report.noInteriorDamage ? "No damage present — confirmed" : "No damage present"}
+            {report.interiorPins.length > 0
+              ? (report.noInteriorDamage ? "No additional damage — confirmed" : "No additional damage")
+              : (report.noInteriorDamage ? "No damage present — confirmed" : "No damage present")}
           </button>
         )}
 
