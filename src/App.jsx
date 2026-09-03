@@ -297,6 +297,12 @@ function blankReport() {
     checklist: {},
     pins: [],
     interiorPins: [],
+    // Explicit "checked, nothing found" confirmations — distinct from an
+    // empty pins array, which could just as easily mean the diagram was
+    // never opened. Lets the pre-send check tell "confirmed clean" apart
+    // from "overlooked".
+    noExteriorDamage: false,
+    noInteriorDamage: false,
     clientResponse: null,
   };
 }
@@ -1063,6 +1069,92 @@ function Dashboard({ index, onNew, onOpen, onClientAccess, onLogout, isAdmin, on
 }
 
 /* ---------------------------------------------------------------
+   Pre-send check — catches a damage diagram that was simply never
+   opened, rather than genuinely confirmed clean. Offers a quick resolve
+   (jump to the diagram, or confirm no damage right here) per missing side.
+----------------------------------------------------------------*/
+function DamageCheckGateModal({
+  missingExterior, missingInterior,
+  onGoExterior, onGoInterior, onNoExteriorDamage, onNoInteriorDamage,
+  onClose,
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(11,37,69,0.45)" }}
+      onClick={onClose}
+    >
+      <div className="bg-white w-full max-w-sm rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle size={20} style={{ color: GOLD }} />
+          <div className="font-semibold text-lg" style={{ color: NAVY }}>Damage check needed</div>
+        </div>
+        <div className="text-sm mb-4" style={{ color: STEEL }}>
+          {missingExterior && missingInterior
+            ? "The exterior and interior diagrams haven't been checked yet."
+            : missingExterior
+            ? "The exterior diagram hasn't been checked yet."
+            : "The interior diagram hasn't been checked yet."}
+          {" "}Mark any damage, or confirm there's none, before sending.
+        </div>
+
+        {missingExterior && (
+          <div className="rounded-lg border p-3 mb-3" style={{ borderColor: LINE }}>
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2" style={{ color: INK }}>
+              <Car size={16} style={{ color: NAVY }} /> Exterior damage
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onGoExterior}
+                className="flex-1 rounded-lg py-2.5 text-sm font-semibold border-2"
+                style={{ borderColor: NAVY, color: NAVY }}
+              >
+                Go to Exterior Damage
+              </button>
+              <button
+                onClick={onNoExteriorDamage}
+                className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white"
+                style={{ background: OK_GREEN }}
+              >
+                No damage present
+              </button>
+            </div>
+          </div>
+        )}
+
+        {missingInterior && (
+          <div className="rounded-lg border p-3 mb-3" style={{ borderColor: LINE }}>
+            <div className="text-sm font-semibold mb-2 flex items-center gap-2" style={{ color: INK }}>
+              <Armchair size={16} style={{ color: NAVY }} /> Interior damage
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onGoInterior}
+                className="flex-1 rounded-lg py-2.5 text-sm font-semibold border-2"
+                style={{ borderColor: NAVY, color: NAVY }}
+              >
+                Go to Interior Damage
+              </button>
+              <button
+                onClick={onNoInteriorDamage}
+                className="flex-1 rounded-lg py-2.5 text-sm font-semibold text-white"
+                style={{ background: OK_GREEN }}
+              >
+                No damage present
+              </button>
+            </div>
+          </div>
+        )}
+
+        <button onClick={onClose} className="w-full mt-1 rounded-lg py-2.5 text-sm font-semibold" style={{ color: STEEL }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    Inspection editor
 ----------------------------------------------------------------*/
 function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInteriorDiagram, onSubmit, saving }) {
@@ -1080,6 +1172,14 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const isRelease = report.reportType === "Release";
   const isRoutine = report.reportType === "Routine";
   const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
+
+  // A diagram counts as checked once it has a point marked or has been
+  // explicitly confirmed clean — an empty pins array on its own doesn't
+  // tell "confirmed clean" apart from "never opened", which is exactly
+  // the oversight the pre-send check below exists to catch.
+  const exteriorChecked = isRoutine || report.pins.length > 0 || report.noExteriorDamage;
+  const interiorChecked = isRoutine || report.interiorPins.length > 0 || report.noInteriorDamage;
+  const [showDamageGate, setShowDamageGate] = useState(false);
 
   // Vehicles this business has already seen — used to auto-fill this report
   // from a past one for the same car, so staff aren't retyping the client/
@@ -1583,7 +1683,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             <button
               onClick={onOpenDiagram}
               className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
-              style={{ borderColor: NAVY }}
+              style={{ borderColor: exteriorChecked ? NAVY : GOLD }}
             >
               <div className="flex items-center gap-3">
                 <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
@@ -1591,9 +1691,15 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                 </div>
                 <div className="text-left">
                   <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                    {report.pins.length > 0 ? `${report.pins.length} point${report.pins.length > 1 ? "s" : ""} marked` : "Mark damage on diagram"}
+                    {report.pins.length > 0
+                      ? `${report.pins.length} point${report.pins.length > 1 ? "s" : ""} marked`
+                      : report.noExteriorDamage
+                      ? "No damage present"
+                      : "Not yet checked"}
                   </div>
-                  <div className="text-xs" style={{ color: STEEL }}>Tap the car to add photos & pins</div>
+                  <div className="text-xs" style={{ color: exteriorChecked ? STEEL : GOLD }}>
+                    {exteriorChecked ? "Tap the car to add photos & pins" : "Needs review before sending"}
+                  </div>
                 </div>
               </div>
               <ChevronRight size={18} style={{ color: STEEL }} />
@@ -1606,7 +1712,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             <button
               onClick={onOpenInteriorDiagram}
               className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
-              style={{ borderColor: NAVY }}
+              style={{ borderColor: interiorChecked ? NAVY : GOLD }}
             >
               <div className="flex items-center gap-3">
                 <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
@@ -1614,9 +1720,15 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                 </div>
                 <div className="text-left">
                   <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                    {report.interiorPins.length > 0 ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked` : "Mark interior condition"}
+                    {report.interiorPins.length > 0
+                      ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked`
+                      : report.noInteriorDamage
+                      ? "No damage present"
+                      : "Not yet checked"}
                   </div>
-                  <div className="text-xs" style={{ color: STEEL }}>Tap the interior to add photos & pins</div>
+                  <div className="text-xs" style={{ color: interiorChecked ? STEEL : GOLD }}>
+                    {interiorChecked ? "Tap the interior to add photos & pins" : "Needs review before sending"}
+                  </div>
                 </div>
               </div>
               <ChevronRight size={18} style={{ color: STEEL }} />
@@ -1649,7 +1761,10 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
 
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t" style={{ borderColor: LINE }}>
         <button
-          onClick={onSubmit}
+          onClick={() => {
+            if (!exteriorChecked || !interiorChecked) setShowDamageGate(true);
+            else onSubmit();
+          }}
           disabled={saving}
           className="w-full rounded-xl py-3.5 text-white font-semibold flex items-center justify-center gap-2"
           style={{ background: NAVY }}
@@ -1658,6 +1773,24 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           {saving ? "Sending…" : "Send for client sign-off"}
         </button>
       </div>
+
+      {showDamageGate && (
+        <DamageCheckGateModal
+          missingExterior={!exteriorChecked}
+          missingInterior={!interiorChecked}
+          onGoExterior={() => { setShowDamageGate(false); onOpenDiagram(); }}
+          onGoInterior={() => { setShowDamageGate(false); onOpenInteriorDiagram(); }}
+          onNoExteriorDamage={() => {
+            setReport((r) => ({ ...r, noExteriorDamage: true }));
+            if (interiorChecked) { setShowDamageGate(false); onSubmit(); }
+          }}
+          onNoInteriorDamage={() => {
+            setReport((r) => ({ ...r, noInteriorDamage: true }));
+            if (exteriorChecked) { setShowDamageGate(false); onSubmit(); }
+          }}
+          onClose={() => setShowDamageGate(false)}
+        />
+      )}
 
       {scanningVin && (
         <Suspense fallback={
@@ -1697,7 +1830,7 @@ function DiagramScreen({ report, setReport, onBack }) {
     const id = genId(5);
     const count = (report.pins.filter((p) => p.code === "S").length) + 1;
     const newPin = { id, panel, x, y, code: "S", number: count, note: "", photo: null };
-    setReport((r) => ({ ...r, pins: [...r.pins, newPin] }));
+    setReport((r) => ({ ...r, pins: [...r.pins, newPin], noExteriorDamage: false }));
     setActivePinId(id);
   };
 
@@ -1738,6 +1871,21 @@ function DiagramScreen({ report, setReport, onBack }) {
             </div>
           ))}
         </div>
+
+        {report.pins.length === 0 && (
+          <button
+            onClick={() => setReport((r) => ({ ...r, noExteriorDamage: !r.noExteriorDamage }))}
+            className="w-full mt-4 rounded-lg border-2 py-3 text-sm font-semibold flex items-center justify-center gap-2"
+            style={{
+              borderColor: report.noExteriorDamage ? OK_GREEN : LINE,
+              background: report.noExteriorDamage ? `${OK_GREEN}15` : "white",
+              color: report.noExteriorDamage ? OK_GREEN : INK,
+            }}
+          >
+            <CheckCircle2 size={16} />
+            {report.noExteriorDamage ? "No damage present — confirmed" : "No damage present"}
+          </button>
+        )}
 
         {report.pins.length > 0 && (
           <div className="mt-5">
@@ -1793,7 +1941,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
     const id = genId(5);
     const count = (report.interiorPins.filter((p) => p.code === "S").length) + 1;
     const newPin = { id, x, y, code: "S", number: count, note: "", photo: null };
-    setReport((r) => ({ ...r, interiorPins: [...r.interiorPins, newPin] }));
+    setReport((r) => ({ ...r, interiorPins: [...r.interiorPins, newPin], noInteriorDamage: false }));
     setActivePinId(id);
   };
 
@@ -1834,6 +1982,21 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
             </div>
           ))}
         </div>
+
+        {report.interiorPins.length === 0 && (
+          <button
+            onClick={() => setReport((r) => ({ ...r, noInteriorDamage: !r.noInteriorDamage }))}
+            className="w-full mt-4 rounded-lg border-2 py-3 text-sm font-semibold flex items-center justify-center gap-2"
+            style={{
+              borderColor: report.noInteriorDamage ? OK_GREEN : LINE,
+              background: report.noInteriorDamage ? `${OK_GREEN}15` : "white",
+              color: report.noInteriorDamage ? OK_GREEN : INK,
+            }}
+          >
+            <CheckCircle2 size={16} />
+            {report.noInteriorDamage ? "No damage present — confirmed" : "No damage present"}
+          </button>
+        )}
 
         {report.interiorPins.length > 0 && (
           <div className="mt-5">
