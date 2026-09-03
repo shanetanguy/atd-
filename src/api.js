@@ -79,6 +79,14 @@ export function deleteReport(id) {
   return request(`/reports/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export function fetchVehicles() {
+  return request("/vehicles");
+}
+
+export function fetchVehicleDocuments(id) {
+  return request(`/vehicles/${encodeURIComponent(id)}/documents`);
+}
+
 export function respondToReport(id, response) {
   return request(`/reports/${encodeURIComponent(id)}/respond`, {
     method: "POST",

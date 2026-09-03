@@ -26,6 +26,59 @@ if (!ADMIN_PASSWORD) {
   console.warn("[atd] ATD_ADMIN_PASSWORD is not set — admin sign-in (needed to delete inspections) is disabled.");
 }
 
+const VEHICLE_FIELDS = [
+  "make", "colour", "year", "clientType", "clientName", "trustCompany",
+  "contactEmail", "contactPhone", "beneficialOwner", "vatSitus", "bay",
+];
+
+function genId(len = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
+function normalizeReg(reg) {
+  return (reg || "").replace(/\s+/g, "").toUpperCase();
+}
+
+// Links a report to a vehicle record keyed by registration, so later checks
+// on the same car can look its details up instead of retyping them. Matches
+// an existing vehicle by normalized reg (or the report's own vehicleId, if
+// it already has one) rather than always creating a new one, and only ever
+// fills in fields the vehicle doesn't already have — a sparse later report
+// (e.g. a routine check with the trust company left blank) never erases
+// data a fuller one already established.
+function linkVehicle(db, report) {
+  const regKey = normalizeReg(report.reg);
+  if (!regKey) return null;
+
+  const now = new Date().toISOString();
+  let vehicle = null;
+
+  if (report.vehicleId) {
+    const row = db.prepare("SELECT data FROM vehicles WHERE id = ?").get(report.vehicleId);
+    if (row) vehicle = JSON.parse(row.data);
+  }
+  if (!vehicle) {
+    const rows = db.prepare("SELECT data FROM vehicles").all();
+    const match = rows.map((r) => JSON.parse(r.data)).find((v) => normalizeReg(v.reg) === regKey);
+    vehicle = match || { id: genId(), reg: report.reg, createdAt: now };
+  }
+
+  for (const field of VEHICLE_FIELDS) {
+    if (report[field]) vehicle[field] = report[field];
+  }
+  vehicle.reg = report.reg;
+
+  db.prepare(
+    `INSERT INTO vehicles (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
+  ).run(vehicle.id, JSON.stringify(vehicle), vehicle.createdAt || now, now);
+
+  return vehicle.id;
+}
+
 const db = getDb();
 const app = express();
 app.use(cors());
@@ -104,11 +157,36 @@ app.post("/api/reports", requireStaff, (req, res) => {
   const report = req.body;
   if (!report || typeof report.id !== "string") return res.status(400).json({ error: "Invalid report" });
   const now = new Date().toISOString();
+  const vehicleId = linkVehicle(db, report);
+  if (vehicleId) report.vehicleId = vehicleId;
   db.prepare(
     `INSERT INTO reports (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`
   ).run(report.id, JSON.stringify(report), now, now);
   res.json(report);
+});
+
+// Staff-only: every vehicle on file, for looking one up by registration to
+// prefill a new report (or just browsing). Fine to return in full at this
+// scale — no separate detail endpoint needed.
+app.get("/api/vehicles", requireStaff, (req, res) => {
+  const rows = db.prepare("SELECT data FROM vehicles ORDER BY updated_at DESC").all();
+  res.json(rows.map((row) => JSON.parse(row.data)));
+});
+
+// Public: a vehicle's own code doubles as the capability, same as a report
+// code. Only ever lists reports that have actually been sent for sign-off —
+// drafts stay internal.
+app.get("/api/vehicles/:id/documents", (req, res) => {
+  const row = db.prepare("SELECT data FROM vehicles WHERE id = ?").get(req.params.id.toUpperCase());
+  if (!row) return res.status(404).json({ error: "Not found" });
+  const vehicle = JSON.parse(row.data);
+  const reportRows = db.prepare("SELECT data FROM reports ORDER BY created_at DESC").all();
+  const documents = reportRows
+    .map((r) => JSON.parse(r.data))
+    .filter((r) => r.vehicleId === vehicle.id && r.status !== "draft")
+    .map((r) => ({ id: r.id, reportType: r.reportType, date: r.date, status: r.status }));
+  res.json({ vehicle, documents });
 });
 
 // Admin-only: permanently removes an inspection.

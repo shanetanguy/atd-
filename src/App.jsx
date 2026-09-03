@@ -51,6 +51,19 @@ function damageCodeFor(code) {
   );
 }
 
+// Fields that carry over from a vehicle's past reports into a new one for
+// the same car (matched by registration) — identity + client/trustee info
+// that's stable across visits, not visit-specific condition data like
+// odometer or fuel level. Mirrors VEHICLE_FIELDS on the server.
+const VEHICLE_PREFILL_FIELDS = [
+  "make", "colour", "year", "clientType", "clientName", "trustCompany",
+  "contactEmail", "contactPhone", "beneficialOwner", "vatSitus", "bay",
+];
+
+function normalizeRegClient(reg) {
+  return (reg || "").replace(/\s+/g, "").toUpperCase();
+}
+
 const YN = ["Y", "N"];
 const FUEL_LEVELS = ["0%", "25%", "50%", "75%", "100%"];
 const CLIENT_TYPES = ["Individual", "Trustee-Held"];
@@ -303,11 +316,12 @@ function Select({ value, onChange, options, placeholder = "Select…" }) {
   );
 }
 
-function TextInput({ value, onChange, placeholder }) {
+function TextInput({ value, onChange, onBlur, placeholder }) {
   return (
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
       placeholder={placeholder}
       className={inputCls}
       style={inputStyle}
@@ -901,6 +915,34 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const isRelease = report.reportType === "Release";
   const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
 
+  // Vehicles this business has already seen — used to auto-fill this report
+  // from a past one for the same car when the registration matches, so
+  // staff aren't retyping the client/trustee/vehicle details every visit.
+  const [vehicles, setVehicles] = useState([]);
+  const [vehicleNote, setVehicleNote] = useState("");
+  useEffect(() => {
+    api.fetchVehicles().then(setVehicles).catch(() => {});
+  }, []);
+
+  const handleRegBlur = () => {
+    if (report.vehicleId) return; // already linked to a vehicle — don't reassign mid-edit
+    const key = normalizeRegClient(report.reg);
+    if (!key) { setVehicleNote(""); return; }
+    const match = vehicles.find((v) => normalizeRegClient(v.reg) === key);
+    if (match) {
+      setReport((r) => {
+        const prefill = {};
+        for (const field of VEHICLE_PREFILL_FIELDS) {
+          if (!r[field] && match[field]) prefill[field] = match[field];
+        }
+        return { ...r, ...prefill, vehicleId: match.id };
+      });
+      setVehicleNote(`Loaded existing details for ${match.reg} — check them before sending.`);
+    } else {
+      setVehicleNote("New vehicle — its details will be saved for future checks.");
+    }
+  };
+
   return (
     <div className="pb-28">
       <TopBar title="New Inspection" onBack={onBack} />
@@ -930,9 +972,12 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
               <TextInput value={report.make} onChange={(v) => set("make", v)} placeholder="e.g. Porsche 911" />
             </Field>
             <Field label="REGISTRATION / VIN">
-              <TextInput value={report.reg} onChange={(v) => set("reg", v)} placeholder="e.g. GY 1234" />
+              <TextInput value={report.reg} onChange={(v) => set("reg", v)} onBlur={handleRegBlur} placeholder="e.g. GY 1234" />
             </Field>
           </div>
+          {vehicleNote && (
+            <div className="text-xs -mt-2 mb-3" style={{ color: STEEL }}>{vehicleNote}</div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="COLOUR">
               <TextInput value={report.colour} onChange={(v) => set("colour", v)} placeholder="e.g. Guards Red" />
@@ -1411,6 +1456,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
 ----------------------------------------------------------------*/
 function ShareScreen({ report, onBack, onDone }) {
   const [copied, setCopied] = useState(false);
+  const [copiedVehicle, setCopiedVehicle] = useState(false);
   const link = `${window.location.origin}/sign/${report.id}`;
 
   const copy = async () => {
@@ -1418,6 +1464,14 @@ function ShareScreen({ report, onBack, onDone }) {
       await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
+    } catch (e) {}
+  };
+
+  const copyVehicle = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/vehicle/${report.vehicleId}`);
+      setCopiedVehicle(true);
+      setTimeout(() => setCopiedVehicle(false), 1800);
     } catch (e) {}
   };
 
@@ -1455,6 +1509,34 @@ function ShareScreen({ report, onBack, onDone }) {
           In this prototype, "sending" stores the report and gives you a code. In the full app this would be a real emailed/texted link the client can open directly, with no code to enter.
         </div>
 
+        {report.vehicleId && (
+          <>
+            <div className="w-full mt-6 pt-6 border-t" style={{ borderColor: LINE }}>
+              <div className="text-sm font-semibold" style={{ color: NAVY }}>This vehicle's document code</div>
+              <div className="text-xs mt-1 max-w-xs mx-auto" style={{ color: STEEL }}>
+                Share this once — your client can use it anytime to see every report sent for this car, not just this one.
+              </div>
+            </div>
+            <div
+              className="w-full mt-3 rounded-xl border-2 border-dashed p-4 flex items-center justify-between gap-3"
+              style={{ borderColor: GOLD }}
+            >
+              <div className="text-left min-w-0">
+                <div className="text-[10px] font-semibold tracking-wide" style={{ color: STEEL }}>VEHICLE CODE</div>
+                <div className="font-mono font-bold text-xl tracking-widest" style={{ color: NAVY }}>{report.vehicleId}</div>
+              </div>
+              <button
+                onClick={copyVehicle}
+                className="rounded-lg px-3 py-2 text-xs font-semibold text-white flex items-center gap-1.5 shrink-0"
+                style={{ background: GOLD }}
+              >
+                {copiedVehicle ? <Check size={14} /> : <Copy size={14} />}
+                {copiedVehicle ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </>
+        )}
+
         <button
           onClick={onDone}
           className="w-full mt-8 rounded-xl py-3.5 font-semibold text-white"
@@ -1470,7 +1552,7 @@ function ShareScreen({ report, onBack, onDone }) {
 /* ---------------------------------------------------------------
    Client access — enter code
 ----------------------------------------------------------------*/
-function ClientAccessScreen({ onBack, onFound, initialError = "" }) {
+function ClientAccessScreen({ onBack, onFound, onFoundVehicle, initialError = "" }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
@@ -1479,11 +1561,19 @@ function ClientAccessScreen({ onBack, onFound, initialError = "" }) {
     if (!code.trim()) return;
     setLoading(true);
     setError("");
+    const c = code.trim().toUpperCase();
     try {
-      const r = await api.fetchReport(code.trim().toUpperCase());
+      try {
+        const v = await api.fetchVehicleDocuments(c);
+        onFoundVehicle(v);
+        return;
+      } catch (e) {
+        // not a vehicle code — fall through and try it as a report code
+      }
+      const r = await api.fetchReport(c);
       onFound(r);
     } catch (e) {
-      setError("No report found for that code. Check with the sender and try again.");
+      setError("No report or vehicle found for that code. Check with the sender and try again.");
     } finally {
       setLoading(false);
     }
@@ -1495,7 +1585,7 @@ function ClientAccessScreen({ onBack, onFound, initialError = "" }) {
       <div className="p-5">
         <div className="text-center mb-6 mt-2">
           <Link2 size={30} className="mx-auto mb-3" style={{ color: NAVY }} />
-          <div className="font-semibold text-lg" style={{ color: NAVY }}>Enter your report code</div>
+          <div className="font-semibold text-lg" style={{ color: NAVY }}>Enter your report or vehicle code</div>
           <div className="text-sm mt-1" style={{ color: STEEL }}>
             This simulates opening the link ATD sent you.
           </div>
@@ -1519,8 +1609,60 @@ function ClientAccessScreen({ onBack, onFound, initialError = "" }) {
           style={{ background: NAVY }}
         >
           {loading ? <Loader2 size={18} className="animate-spin" /> : null}
-          View report
+          View
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Vehicle document portal — a client opens this with their vehicle's own
+   code (distinct from a single report's code) and sees every report ever
+   sent for that car, not just one.
+----------------------------------------------------------------*/
+function VehicleDocumentsScreen({ vehicle, documents, onBack, onOpenDocument, loadingId }) {
+  return (
+    <div>
+      <TopBar title="Vehicle Documents" onBack={onBack} />
+      <div className="p-5">
+        <div className="text-center mb-6 mt-2">
+          <ClipboardList size={30} className="mx-auto mb-3" style={{ color: NAVY }} />
+          <div className="font-semibold text-lg" style={{ color: NAVY }}>
+            {vehicle.make || "Vehicle"} {vehicle.reg ? `· ${vehicle.reg}` : ""}
+          </div>
+          <div className="text-sm mt-1" style={{ color: STEEL }}>
+            Every report ATD has sent for this vehicle.
+          </div>
+        </div>
+
+        {documents.length === 0 && (
+          <div className="text-center py-16 rounded-xl border" style={{ borderColor: LINE, color: STEEL }}>
+            <ClipboardList size={28} className="mx-auto mb-2 opacity-50" />
+            <div className="text-sm">No reports sent for this vehicle yet.</div>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {documents.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => onOpenDocument(d.id)}
+              disabled={loadingId === d.id}
+              className="w-full text-left bg-white rounded-xl p-3.5 border flex items-center justify-between"
+              style={{ borderColor: LINE }}
+            >
+              <div className="min-w-0">
+                <div className="font-semibold text-sm truncate" style={{ color: INK }}>{d.reportType} Report</div>
+                <div className="text-xs mt-0.5" style={{ color: STEEL }}>{d.date} · ref {d.id}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 ml-2">
+                {loadingId === d.id ? <Loader2 size={16} className="animate-spin" style={{ color: STEEL }} /> : <StatusChip status={d.status} />}
+                <ChevronRight size={16} style={{ color: STEEL }} />
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1907,7 +2049,7 @@ function SummaryRow({ label, value }) {
    Root app
 ----------------------------------------------------------------*/
 export default function App() {
-  // loading | login | dashboard | edit | diagram | interiorDiagram | share | clientAccess | clientView
+  // loading | login | dashboard | edit | diagram | interiorDiagram | share | clientAccess | clientView | vehicleView
   const [view, setView] = useState("loading");
   const [authed, setAuthed] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -1916,19 +2058,38 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [clientReport, setClientReport] = useState(null);
   const [clientAccessError, setClientAccessError] = useState("");
+  const [vehicleDocs, setVehicleDocs] = useState(null);
+  const [clientViewOrigin, setClientViewOrigin] = useState("clientAccess");
+  const [openingDocId, setOpeningDocId] = useState(null);
 
   useEffect(() => {
     (async () => {
       // A real client link: /sign/<code>. No staff login involved — the
       // code itself is the access capability, same as the original design.
-      const match = window.location.pathname.match(/^\/sign\/([A-Za-z0-9]{3,10})$/);
-      if (match) {
+      const signMatch = window.location.pathname.match(/^\/sign\/([A-Za-z0-9]{3,10})$/);
+      if (signMatch) {
         try {
-          const r = await api.fetchReport(match[1].toUpperCase());
+          const r = await api.fetchReport(signMatch[1].toUpperCase());
           setClientReport(normalizeReport(r));
+          setClientViewOrigin("clientAccess");
           setView("clientView");
         } catch (e) {
           setClientAccessError("That report link doesn't look right. Enter your code below.");
+          setView("clientAccess");
+        }
+        return;
+      }
+
+      // A vehicle's own link: /vehicle/<code> — shows every report sent for
+      // that car, same public-by-code design as /sign/<code>.
+      const vehicleMatch = window.location.pathname.match(/^\/vehicle\/([A-Za-z0-9]{3,10})$/);
+      if (vehicleMatch) {
+        try {
+          const v = await api.fetchVehicleDocuments(vehicleMatch[1].toUpperCase());
+          setVehicleDocs(v);
+          setView("vehicleView");
+        } catch (e) {
+          setClientAccessError("That vehicle link doesn't look right. Enter your code below.");
           setView("clientAccess");
         }
         return;
@@ -1981,6 +2142,19 @@ export default function App() {
       console.error(e);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openVehicleDocument = async (id) => {
+    setOpeningDocId(id);
+    try {
+      const r = await api.fetchReport(id);
+      setClientReport(normalizeReport(r));
+      setClientViewOrigin("vehicleView");
+      setView("clientView");
+    } catch (e) {
+    } finally {
+      setOpeningDocId(null);
     }
   };
 
@@ -2066,15 +2240,26 @@ export default function App() {
         {view === "clientAccess" && (
           <ClientAccessScreen
             onBack={() => setView(authed ? "dashboard" : "login")}
-            onFound={(r) => { setClientReport(normalizeReport(r)); setView("clientView"); }}
+            onFound={(r) => { setClientReport(normalizeReport(r)); setClientViewOrigin("clientAccess"); setView("clientView"); }}
+            onFoundVehicle={(v) => { setVehicleDocs(v); setView("vehicleView"); }}
             initialError={clientAccessError}
+          />
+        )}
+
+        {view === "vehicleView" && vehicleDocs && (
+          <VehicleDocumentsScreen
+            vehicle={vehicleDocs.vehicle}
+            documents={vehicleDocs.documents}
+            onBack={() => setView("clientAccess")}
+            onOpenDocument={openVehicleDocument}
+            loadingId={openingDocId}
           />
         )}
 
         {view === "clientView" && clientReport && (
           <ClientViewScreen
             report={clientReport}
-            onBack={() => setView("clientAccess")}
+            onBack={() => setView(clientViewOrigin)}
             onRespond={async (resp) => {
               const updated = await api.respondToReport(clientReport.id, resp);
               setClientReport(normalizeReport(updated));
