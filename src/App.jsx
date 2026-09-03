@@ -2241,12 +2241,12 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           (report.clientType || report.clientName || report.trustCompany || report.contactEmail || report.contactPhone || report.beneficialOwner) && (
           <Section title="Trustee / Client Details">
             <div className="grid grid-cols-2 gap-2 text-sm">
-              <SummaryRow label="Client type" value={report.clientType} />
-              <SummaryRow label="Client name" value={report.clientName} />
-              <SummaryRow label="Trust / fiduciary company" value={report.trustCompany} />
-              <SummaryRow label="Contact email / phone" value={report.contactEmail} />
+              <SummaryRow label="Client type" value={report.clientType} hideIfBlank />
+              <SummaryRow label="Client name" value={report.clientName} hideIfBlank />
+              <SummaryRow label="Trust / fiduciary company" value={report.trustCompany} hideIfBlank />
+              <SummaryRow label="Contact email / phone" value={report.contactEmail} hideIfBlank />
               {report.reportType === "Intake" && (
-                <SummaryRow label="Beneficial owner" value={report.beneficialOwner} />
+                <SummaryRow label="Beneficial owner" value={report.beneficialOwner} hideIfBlank />
               )}
             </div>
           </Section>
@@ -2394,6 +2394,9 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <SummaryRow label="Released to" value={report.releasedTo} />
               <SummaryRow label="Recipient" value={report.recipientName} />
               <SummaryRow label="ID checked" value={report.idChecked} />
+              <SummaryRow label="Transport / logistics co." value={report.transportCo} hideIfBlank />
+              <SummaryRow label="Driver name" value={report.driverName} hideIfBlank />
+              <SummaryRow label="Collection ref. / PO no." value={report.collectionRef} hideIfBlank />
               <SummaryRow label="Keys / fobs returned" value={report.items.keysCount} />
               <SummaryRow label="Service book" value={report.items.serviceBook} />
               <SummaryRow label="Battery conditioner removed" value={report.items.batteryConditionerRemoved} />
@@ -2573,7 +2576,8 @@ function ClientViewScreen({ report, onBack, onRespond }) {
   );
 }
 
-function SummaryRow({ label, value }) {
+function SummaryRow({ label, value, hideIfBlank }) {
+  if (hideIfBlank && !value) return null;
   return (
     <div className="bg-white rounded-lg border p-2.5 print:break-inside-avoid" style={{ borderColor: LINE }}>
       <div className="text-[10px] font-semibold" style={{ color: STEEL }}>{label.toUpperCase()}</div>
