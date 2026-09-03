@@ -72,6 +72,8 @@ const CHECKLIST_STATUS = ["OK", "Issue", "Not Checked"];
 const SPARE_WHEEL_OPTIONS = ["Y", "N", "Space-Saver"];
 const V5_OPTIONS = ["Y", "N", "Held by Trustee"];
 const CABLE_OPTIONS = ["Y", "N", "N/A"];
+const CONDITION_OPTIONS = ["Clean", "Soiled"];
+const CLEANED_OPTIONS = ["Cleaned", "Not Cleaned"];
 
 // Condition checklist differs by report type, matching ATD's own Intake and
 // Handover/Release templates. Routine (no separate template) keeps the
@@ -175,6 +177,10 @@ function blankReport() {
     handbrake: "",
     fuel: "",
     // Intake only
+    interiorCondition: "",
+    interiorConditionCleaned: "",
+    exteriorCondition: "",
+    exteriorConditionCleaned: "",
     receivedFrom: "",
     handedOverBy: "",
     // Release only
@@ -1069,6 +1075,41 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           <Field label="FUEL / CHARGE LEVEL">
             <Select value={report.fuel} onChange={(v) => set("fuel", v)} options={FUEL_LEVELS} />
           </Field>
+
+          {isIntake && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="VEHICLE CONDITION ON ARRIVAL — INTERIOR">
+                  <Select
+                    value={report.interiorCondition}
+                    onChange={(v) => setReport((r) => ({ ...r, interiorCondition: v, interiorConditionCleaned: v === "Soiled" ? r.interiorConditionCleaned : "" }))}
+                    options={CONDITION_OPTIONS}
+                  />
+                </Field>
+                <Field label="VEHICLE CONDITION ON ARRIVAL — EXTERIOR">
+                  <Select
+                    value={report.exteriorCondition}
+                    onChange={(v) => setReport((r) => ({ ...r, exteriorCondition: v, exteriorConditionCleaned: v === "Soiled" ? r.exteriorConditionCleaned : "" }))}
+                    options={CONDITION_OPTIONS}
+                  />
+                </Field>
+              </div>
+              {(report.interiorCondition === "Soiled" || report.exteriorCondition === "Soiled") && (
+                <div className="grid grid-cols-2 gap-3">
+                  {report.interiorCondition === "Soiled" && (
+                    <Field label="INTERIOR CLEANED?">
+                      <Select value={report.interiorConditionCleaned} onChange={(v) => set("interiorConditionCleaned", v)} options={CLEANED_OPTIONS} />
+                    </Field>
+                  )}
+                  {report.exteriorCondition === "Soiled" && (
+                    <Field label="EXTERIOR CLEANED?">
+                      <Select value={report.exteriorConditionCleaned} onChange={(v) => set("exteriorConditionCleaned", v)} options={CLEANED_OPTIONS} />
+                    </Field>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </Section>
 
         {(isIntake || isRelease) && (
@@ -1890,6 +1931,22 @@ function ClientViewScreen({ report, onBack, onRespond }) {
             <SummaryRow label="Handbrake off" value={report.handbrake} />
             <SummaryRow label="Fuel / charge" value={report.fuel} />
             <SummaryRow label="Inspected by" value={report.inspectedBy} />
+            {report.reportType === "Intake" && (
+              <>
+                <SummaryRow
+                  label="Interior on arrival"
+                  value={report.interiorCondition === "Soiled" && report.interiorConditionCleaned
+                    ? `Soiled — ${report.interiorConditionCleaned}`
+                    : report.interiorCondition}
+                />
+                <SummaryRow
+                  label="Exterior on arrival"
+                  value={report.exteriorCondition === "Soiled" && report.exteriorConditionCleaned
+                    ? `Soiled — ${report.exteriorConditionCleaned}`
+                    : report.exteriorCondition}
+                />
+              </>
+            )}
           </div>
         </Section>
 
