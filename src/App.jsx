@@ -72,6 +72,23 @@ function HeldNote({ value }) {
   return <div className="text-[11px] mt-1" style={{ color: OK_GREEN }}>✓ Already held: {value}</div>;
 }
 
+// A Y/N field that only reveals a reason box when the answer is N — used
+// on Routine for the run-up-to-temperature and mechanical-exercise checks.
+function YesNoReasonField({ label, value, onChange, reason, onReasonChange }) {
+  return (
+    <div>
+      <Field label={label.toUpperCase()}>
+        <Select value={value} onChange={(v) => { onChange(v); if (v !== "N") onReasonChange(""); }} options={YN} />
+      </Field>
+      {value === "N" && (
+        <Field label="REASON">
+          <TextInput value={reason} onChange={onReasonChange} placeholder="Why not?" />
+        </Field>
+      )}
+    </div>
+  );
+}
+
 function PinOriginTag({ pin }) {
   if (pin.origin !== "carried") return null;
   const repaired = pin.status === "repaired";
@@ -151,7 +168,27 @@ const TYRE_POSITIONS = [
 ];
 
 function blankTyres() {
-  return Object.fromEntries(TYRE_POSITIONS.map((p) => [p.key, { factory: "", reading: "", reset: false }]));
+  return Object.fromEntries(
+    TYRE_POSITIONS.map((p) => [p.key, { factory: "", reading: "", reset: false, currentReading: "", newSetPressure: "" }])
+  );
+}
+
+// Tyre pressures are free-text ("32 psi", "2.2 bar") so comparing them
+// means pulling the first number out rather than assuming a fixed format.
+function parsePsi(v) {
+  const m = (v || "").match(/-?\d+(\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+// Routine's current-reading field is colour-coded against what was set on
+// intake: green if it's held (or only dropped a little), red once it's
+// down more than 5psi — a null return means there's nothing to compare
+// (no intake reading on file, or the field isn't a parseable number yet).
+function tyreReadingColor(current, intakeReading) {
+  const c = parsePsi(current);
+  const i = parsePsi(intakeReading);
+  if (c == null || i == null) return null;
+  return c >= i - 5 ? OK_GREEN : ISSUE_RED;
 }
 
 function blankItems() {
@@ -226,6 +263,14 @@ function blankReport() {
     transportCo: "",
     driverName: "",
     collectionRef: "",
+    // Routine only
+    runUpToTemp: "",
+    runUpToTempReason: "",
+    mechanicalExercise: "",
+    mechanicalExerciseReason: "",
+    warningLights: "",
+    actionRequired: "",
+    actionAcknowledged: false,
     items: blankItems(),
     tyres: blankTyres(),
     checklist: {},
@@ -243,7 +288,12 @@ function normalizeReport(r) {
     ...blankReport(),
     ...r,
     items: { ...blankItems(), ...(r.items || {}) },
-    tyres: { ...blankTyres(), ...(r.tyres || {}) },
+    // Deep-merged per position — a shallow merge would drop new tyre
+    // fields (currentReading, newSetPressure) entirely on any report saved
+    // before they existed, since the old position object would win whole.
+    tyres: Object.fromEntries(
+      TYRE_POSITIONS.map((p) => [p.key, { ...blankTyres()[p.key], ...((r.tyres || {})[p.key] || {}) }])
+    ),
     checklist: r.checklist || {},
     pins: r.pins || [],
     interiorPins: r.interiorPins || [],
@@ -1007,6 +1057,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
 
   const isIntake = report.reportType === "Intake";
   const isRelease = report.reportType === "Release";
+  const isRoutine = report.reportType === "Routine";
   const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
 
   // Vehicles this business has already seen — used to auto-fill this report
@@ -1021,6 +1072,9 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   // green "already held" note next to the matching field on a returning
   // car's new intake, so staff see what's expected without re-entering it.
   const [heldItems, setHeldItems] = useState(null);
+  // Tyre pressures recorded on this vehicle's last intake — referenced by
+  // Routine's tyre pressure section to compare against today's reading.
+  const [heldTyres, setHeldTyres] = useState(null);
   useEffect(() => {
     api.fetchVehicles().then(setVehicles).catch(() => {});
   }, []);
@@ -1043,6 +1097,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
     // diagram renders them distinctly from anything marked fresh today.
     const returning = isIntake && !!match.intakeReportId;
     if (returning) setHeldItems(match.intakeItems || null);
+    if (match.intakeTyres) setHeldTyres(match.intakeTyres);
 
     setReport((r) => {
       const prefill = {};
@@ -1381,6 +1436,41 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           </Section>
         )}
 
+        {isRoutine && (
+          <Section title="Tyre Pressures">
+            <div className="text-xs mb-3" style={{ color: STEEL }}>
+              {heldTyres
+                ? "Reference is what was set on this vehicle's last intake. Current reading turns red if it's dropped more than 5psi below that."
+                : "No intake reading on file for this vehicle yet — current readings won't be colour-checked."}
+            </div>
+            {TYRE_POSITIONS.map((p) => {
+              const intakeReading = heldTyres?.[p.key]?.reading || "";
+              const color = tyreReadingColor(report.tyres[p.key].currentReading, intakeReading);
+              return (
+                <div key={p.key} className="mb-3">
+                  <div className="text-xs font-semibold mb-1.5" style={{ color: INK }}>{p.label}</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div
+                      className="rounded-lg border px-3 py-2.5 text-[15px] flex items-center"
+                      style={{ borderColor: LINE, color: intakeReading ? INK : "#9A968C", background: "#F6F5F1" }}
+                    >
+                      {intakeReading || "Set on intake: —"}
+                    </div>
+                    <input
+                      value={report.tyres[p.key].currentReading}
+                      onChange={(e) => setTyre(p.key, "currentReading", e.target.value)}
+                      placeholder="Current PSI/BAR"
+                      className={inputCls}
+                      style={{ borderColor: color || LINE, color: color || INK, fontWeight: color ? 600 : 400 }}
+                    />
+                    <TextInput value={report.tyres[p.key].newSetPressure} onChange={(v) => setTyre(p.key, "newSetPressure", v)} placeholder="New set pressure" />
+                  </div>
+                </div>
+              );
+            })}
+          </Section>
+        )}
+
         <Section title="Condition Checklist">
           {checklistItems.map((item) => {
             const entry = checklistEntry(report, item);
@@ -1407,6 +1497,28 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
               </div>
             );
           })}
+
+          {isRoutine && (
+            <div className="pt-3 mt-1 space-y-4">
+              <YesNoReasonField
+                label="Vehicle run up to temperature (60-day check)"
+                value={report.runUpToTemp}
+                onChange={(v) => set("runUpToTemp", v)}
+                reason={report.runUpToTempReason}
+                onReasonChange={(v) => set("runUpToTempReason", v)}
+              />
+              <YesNoReasonField
+                label="Mechanical exercise carried out"
+                value={report.mechanicalExercise}
+                onChange={(v) => set("mechanicalExercise", v)}
+                reason={report.mechanicalExerciseReason}
+                onReasonChange={(v) => set("mechanicalExerciseReason", v)}
+              />
+              <Field label="WARNING LIGHTS">
+                <TextInput value={report.warningLights} onChange={(v) => set("warningLights", v)} placeholder="None, or describe what's showing" />
+              </Field>
+            </div>
+          )}
         </Section>
 
         {isRelease && (
@@ -1415,47 +1527,73 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           </div>
         )}
 
-        <Section title="Damage Diagram">
-          <button
-            onClick={onOpenDiagram}
-            className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
-            style={{ borderColor: NAVY }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
-                <Car size={22} style={{ color: NAVY }} />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                  {report.pins.length > 0 ? `${report.pins.length} point${report.pins.length > 1 ? "s" : ""} marked` : "Mark damage on diagram"}
+        {!isRoutine && (
+          <Section title="Damage Diagram">
+            <button
+              onClick={onOpenDiagram}
+              className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
+              style={{ borderColor: NAVY }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
+                  <Car size={22} style={{ color: NAVY }} />
                 </div>
-                <div className="text-xs" style={{ color: STEEL }}>Tap the car to add photos & pins</div>
+                <div className="text-left">
+                  <div className="font-semibold text-sm" style={{ color: NAVY }}>
+                    {report.pins.length > 0 ? `${report.pins.length} point${report.pins.length > 1 ? "s" : ""} marked` : "Mark damage on diagram"}
+                  </div>
+                  <div className="text-xs" style={{ color: STEEL }}>Tap the car to add photos & pins</div>
+                </div>
               </div>
-            </div>
-            <ChevronRight size={18} style={{ color: STEEL }} />
-          </button>
-        </Section>
+              <ChevronRight size={18} style={{ color: STEEL }} />
+            </button>
+          </Section>
+        )}
 
-        <Section title="Interior Diagram">
-          <button
-            onClick={onOpenInteriorDiagram}
-            className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
-            style={{ borderColor: NAVY }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
-                <Armchair size={22} style={{ color: NAVY }} />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold text-sm" style={{ color: NAVY }}>
-                  {report.interiorPins.length > 0 ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked` : "Mark interior condition"}
+        {!isRoutine && (
+          <Section title="Interior Diagram">
+            <button
+              onClick={onOpenInteriorDiagram}
+              className="w-full rounded-xl border-2 p-4 flex items-center justify-between"
+              style={{ borderColor: NAVY }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg p-2" style={{ background: `${NAVY}12` }}>
+                  <Armchair size={22} style={{ color: NAVY }} />
                 </div>
-                <div className="text-xs" style={{ color: STEEL }}>Tap the interior to add photos & pins</div>
+                <div className="text-left">
+                  <div className="font-semibold text-sm" style={{ color: NAVY }}>
+                    {report.interiorPins.length > 0 ? `${report.interiorPins.length} point${report.interiorPins.length > 1 ? "s" : ""} marked` : "Mark interior condition"}
+                  </div>
+                  <div className="text-xs" style={{ color: STEEL }}>Tap the interior to add photos & pins</div>
+                </div>
               </div>
-            </div>
-            <ChevronRight size={18} style={{ color: STEEL }} />
-          </button>
-        </Section>
+              <ChevronRight size={18} style={{ color: STEEL }} />
+            </button>
+          </Section>
+        )}
+
+        {isRoutine && (
+          <Section title="Action Required">
+            <textarea
+              value={report.actionRequired}
+              onChange={(e) => set("actionRequired", e.target.value)}
+              rows={3}
+              placeholder="e.g. Fuel needed topping up, service due/overdue"
+              className={inputCls}
+              style={inputStyle}
+            />
+            <label className="flex items-start gap-2 text-sm mt-3" style={{ color: INK }}>
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={report.actionAcknowledged}
+                onChange={(e) => set("actionAcknowledged", e.target.checked)}
+              />
+              I acknowledge the action(s) above{report.actionRequired ? "" : " (none noted)"}
+            </label>
+          </Section>
+        )}
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t" style={{ borderColor: LINE }}>
@@ -2045,61 +2183,65 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           )}
         </div>
 
-        <Section title="Damage Diagram">
-          <CarDiagram pins={report.pins} readOnly activePinId={viewPin} onSelectPin={setViewPin} />
-          <div className="mt-3 space-y-2">
-            {report.pins.map((p) => {
-              const dc = damageCodeFor(p.code);
-              return (
-                <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
-                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
-                    {p.code}{p.number}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
-                      {dc.label} · {panelLabel(p.panel)} <PinOriginTag pin={p} />
+        {report.reportType !== "Routine" && (
+          <Section title="Damage Diagram">
+            <CarDiagram pins={report.pins} readOnly activePinId={viewPin} onSelectPin={setViewPin} />
+            <div className="mt-3 space-y-2">
+              {report.pins.map((p) => {
+                const dc = damageCodeFor(p.code);
+                return (
+                  <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
+                    <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
+                      {p.code}{p.number}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
+                        {dc.label} · {panelLabel(p.panel)} <PinOriginTag pin={p} />
+                      </div>
+                      {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
+                      {p.photo && (
+                        <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
+                      )}
                     </div>
-                    {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
-                    {p.photo && (
-                      <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
-                    )}
                   </div>
-                </div>
-              );
-            })}
-            {report.pins.length === 0 && (
-              <div className="text-sm text-center py-4" style={{ color: STEEL }}>No damage marked on this report.</div>
-            )}
-          </div>
-        </Section>
+                );
+              })}
+              {report.pins.length === 0 && (
+                <div className="text-sm text-center py-4" style={{ color: STEEL }}>No damage marked on this report.</div>
+              )}
+            </div>
+          </Section>
+        )}
 
-        <Section title="Interior Diagram">
-          <InteriorDiagram pins={report.interiorPins} readOnly activePinId={viewInteriorPin} onSelectPin={setViewInteriorPin} />
-          <div className="mt-3 space-y-2">
-            {report.interiorPins.map((p) => {
-              const dc = damageCodeFor(p.code);
-              return (
-                <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
-                  <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
-                    {p.code}{p.number}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
-                      {dc.label} · Interior <PinOriginTag pin={p} />
+        {report.reportType !== "Routine" && (
+          <Section title="Interior Diagram">
+            <InteriorDiagram pins={report.interiorPins} readOnly activePinId={viewInteriorPin} onSelectPin={setViewInteriorPin} />
+            <div className="mt-3 space-y-2">
+              {report.interiorPins.map((p) => {
+                const dc = damageCodeFor(p.code);
+                return (
+                  <div key={p.id} className="bg-white rounded-lg p-2.5 border flex gap-3" style={{ borderColor: LINE }}>
+                    <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: pinColor(p) }}>
+                      {p.code}{p.number}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium flex items-center gap-1.5" style={{ color: INK }}>
+                        {dc.label} · Interior <PinOriginTag pin={p} />
+                      </div>
+                      {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
+                      {p.photo && (
+                        <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
+                      )}
                     </div>
-                    {p.note && <div className="text-xs mt-0.5" style={{ color: STEEL }}>{p.note}</div>}
-                    {p.photo && (
-                      <img src={p.photo} alt="" className="mt-2 rounded-md w-full max-w-[220px]" />
-                    )}
                   </div>
-                </div>
-              );
-            })}
-            {report.interiorPins.length === 0 && (
-              <div className="text-sm text-center py-4" style={{ color: STEEL }}>No interior damage marked on this report.</div>
-            )}
-          </div>
-        </Section>
+                );
+              })}
+              {report.interiorPins.length === 0 && (
+                <div className="text-sm text-center py-4" style={{ color: STEEL }}>No interior damage marked on this report.</div>
+              )}
+            </div>
+          </Section>
+        )}
 
         {(CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine).some((item) => checklistEntry(report, item).status) && (
           <Section title="Condition Checklist">
@@ -2196,6 +2338,63 @@ function ClientViewScreen({ report, onBack, onRespond }) {
             <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: `${GOLD}15`, color: STEEL }}>
               By confirming below, you agree the vehicle is being released in the condition recorded on this report. ATD Automotive Detailing accepts no responsibility for any damage, fault, or missing item not noted above at the time of release.
             </div>
+          </Section>
+        )}
+
+        {report.reportType === "Routine" && (
+          <Section title="Routine Check Details">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <SummaryRow
+                label="Run up to temperature"
+                value={report.runUpToTemp === "N" && report.runUpToTempReason ? `N — ${report.runUpToTempReason}` : report.runUpToTemp}
+              />
+              <SummaryRow
+                label="Mechanical exercise"
+                value={report.mechanicalExercise === "N" && report.mechanicalExerciseReason ? `N — ${report.mechanicalExerciseReason}` : report.mechanicalExercise}
+              />
+              <SummaryRow label="Warning lights" value={report.warningLights} />
+            </div>
+
+            {TYRE_POSITIONS.some((p) => report.tyres[p.key].currentReading || report.tyres[p.key].newSetPressure) && (
+              <div className="mt-3">
+                <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>TYRE PRESSURES</div>
+                <div className="space-y-1.5">
+                  {TYRE_POSITIONS.map((p) => {
+                    const t = report.tyres[p.key];
+                    if (!t.currentReading && !t.newSetPressure) return null;
+                    return (
+                      <div
+                        key={p.key}
+                        className="bg-white rounded-lg border px-3 py-2 flex items-center justify-between text-sm print:break-inside-avoid"
+                        style={{ borderColor: LINE }}
+                      >
+                        <span style={{ color: INK }}>{p.label}</span>
+                        <span style={{ color: STEEL }}>
+                          {t.currentReading && `Current: ${t.currentReading}`}
+                          {t.currentReading && t.newSetPressure ? " · " : ""}
+                          {t.newSetPressure && `Set to: ${t.newSetPressure}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {report.actionRequired && (
+              <div
+                className="mt-3 rounded-lg p-3 text-sm print:break-inside-avoid"
+                style={{ background: `${GOLD}15`, color: INK, borderLeft: `3px solid ${GOLD}` }}
+              >
+                <div className="font-semibold text-xs mb-1" style={{ color: STEEL }}>ACTION REQUIRED</div>
+                {report.actionRequired}
+                {report.actionAcknowledged && (
+                  <div className="text-xs mt-1.5 flex items-center gap-1" style={{ color: OK_GREEN }}>
+                    <Check size={12} /> Acknowledged by ATD staff
+                  </div>
+                )}
+              </div>
+            )}
           </Section>
         )}
 
