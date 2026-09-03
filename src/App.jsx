@@ -2232,7 +2232,25 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               {[report.colour, report.year, report.odometer && `${report.odometer} odo`].filter(Boolean).join(" · ")}
             </div>
           )}
+          {report.vin && (
+            <div className="text-sm mt-0.5" style={{ color: STEEL }}>VIN {report.vin}</div>
+          )}
         </div>
+
+        {report.reportType !== "Routine" &&
+          (report.clientType || report.clientName || report.trustCompany || report.contactEmail || report.contactPhone || report.beneficialOwner) && (
+          <Section title="Trustee / Client Details">
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <SummaryRow label="Client type" value={report.clientType} />
+              <SummaryRow label="Client name" value={report.clientName} />
+              <SummaryRow label="Trust / fiduciary company" value={report.trustCompany} />
+              <SummaryRow label="Contact email / phone" value={report.contactEmail} />
+              {report.reportType === "Intake" && (
+                <SummaryRow label="Beneficial owner" value={report.beneficialOwner} />
+              )}
+            </div>
+          </Section>
+        )}
 
         {report.reportType !== "Routine" && (
           <Section title="Damage Diagram">
