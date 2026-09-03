@@ -38,20 +38,24 @@ function genId(len = 6) {
   return s;
 }
 
-function normalizeReg(reg) {
-  return (reg || "").replace(/\s+/g, "").toUpperCase();
+function normalizeCode(v) {
+  return (v || "").replace(/\s+/g, "").toUpperCase();
 }
 
-// Links a report to a vehicle record keyed by registration, so later checks
-// on the same car can look its details up instead of retyping them. Matches
-// an existing vehicle by normalized reg (or the report's own vehicleId, if
-// it already has one) rather than always creating a new one, and only ever
+// Links a report to a vehicle record, so later checks on the same car can
+// look its details up instead of retyping them. A VIN never changes, but a
+// registration can be reused or transferred between cars — so a VIN match
+// is preferred, and registration is only used as a fallback for reports
+// that don't carry a VIN (routine checks won't always have one scanned).
+// Matches an existing vehicle (or uses the report's own vehicleId, if it
+// already has one) rather than always creating a new one, and only ever
 // fills in fields the vehicle doesn't already have — a sparse later report
 // (e.g. a routine check with the trust company left blank) never erases
 // data a fuller one already established.
 function linkVehicle(db, report) {
-  const regKey = normalizeReg(report.reg);
-  if (!regKey) return null;
+  const vinKey = normalizeCode(report.vin);
+  const regKey = normalizeCode(report.reg);
+  if (!vinKey && !regKey) return null;
 
   const now = new Date().toISOString();
   let vehicle = null;
@@ -61,15 +65,31 @@ function linkVehicle(db, report) {
     if (row) vehicle = JSON.parse(row.data);
   }
   if (!vehicle) {
-    const rows = db.prepare("SELECT data FROM vehicles").all();
-    const match = rows.map((r) => JSON.parse(r.data)).find((v) => normalizeReg(v.reg) === regKey);
-    vehicle = match || { id: genId(), reg: report.reg, createdAt: now };
+    const all = db.prepare("SELECT data FROM vehicles").all().map((r) => JSON.parse(r.data));
+    const match =
+      (vinKey && all.find((v) => normalizeCode(v.vin) === vinKey)) ||
+      (regKey && all.find((v) => normalizeCode(v.reg) === regKey)) ||
+      null;
+    vehicle = match || { id: genId(), createdAt: now };
   }
 
   for (const field of VEHICLE_FIELDS) {
     if (report[field]) vehicle[field] = report[field];
   }
-  vehicle.reg = report.reg;
+  if (report.reg) vehicle.reg = report.reg;
+  if (report.vin) vehicle.vin = report.vin;
+
+  // Snapshot intake-time reference data onto the vehicle record so later
+  // Routine/Release reports (and a future Intake, if this car comes back)
+  // can look up "what did we record at intake" without a separate fetch.
+  if (report.reportType === "Intake") {
+    vehicle.intakeReportId = report.id;
+    vehicle.intakeDate = report.date;
+    vehicle.intakeTyres = report.tyres;
+    vehicle.intakeItems = report.items;
+    vehicle.intakePins = report.pins;
+    vehicle.intakeInteriorPins = report.interiorPins;
+  }
 
   db.prepare(
     `INSERT INTO vehicles (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)

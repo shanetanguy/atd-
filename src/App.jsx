@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from "react";
 import * as api from "./api.js";
 import { CAR_ART_PATHS } from "./carArt.js";
 import atdLogo from "./assets/atd-logo.png";
@@ -7,8 +7,10 @@ import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
   ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText, Download,
-  Armchair
+  Armchair, ScanLine
 } from "lucide-react";
+
+const VinScannerModal = lazy(() => import("./VinScannerModal.jsx"));
 
 /* ---------------------------------------------------------------
    ATD Automotive Storage — Inspection & Sign-off prototype
@@ -74,6 +76,8 @@ const V5_OPTIONS = ["Y", "N", "Held by Trustee"];
 const CABLE_OPTIONS = ["Y", "N", "N/A"];
 const CONDITION_OPTIONS = ["Clean", "Soiled"];
 const CLEANED_OPTIONS = ["Cleaned", "Not Cleaned"];
+const KEYS_OPTIONS = ["1", "2", "3", "4", "5"];
+const TRACKER_FOB_OPTIONS = ["0", "1", "2", "3", "4"];
 
 // Condition checklist differs by report type, matching ATD's own Intake and
 // Handover/Release templates. Routine (no separate template) keeps the
@@ -126,10 +130,11 @@ function blankItems() {
     spareWheel: "",
     lockingWheelNut: "",
     ownersManual: "",
-    parcelShelf: "",
+    trackerFobQty: "",
     v5Doc: "",
     chargingCable: "",
     insuranceConfirmed: "",
+    insuranceValidTo: "",
     motValidTo: "",
     conditionerMakeModel: "",
     batteryConditionerRemoved: "",
@@ -922,31 +927,55 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const checklistItems = CHECKLIST_ITEMS[report.reportType] || CHECKLIST_ITEMS.Routine;
 
   // Vehicles this business has already seen — used to auto-fill this report
-  // from a past one for the same car when the registration matches, so
-  // staff aren't retyping the client/trustee/vehicle details every visit.
+  // from a past one for the same car, so staff aren't retyping the client/
+  // trustee/vehicle details every visit. A VIN never changes, but a
+  // registration can be transferred between cars, so VIN is checked first;
+  // registration is just a fallback for when no VIN's been entered yet.
   const [vehicles, setVehicles] = useState([]);
   const [vehicleNote, setVehicleNote] = useState("");
+  const [scanningVin, setScanningVin] = useState(false);
   useEffect(() => {
     api.fetchVehicles().then(setVehicles).catch(() => {});
   }, []);
 
-  const handleRegBlur = () => {
+  const findVehicleMatch = (r) => {
+    const vinKey = normalizeRegClient(r.vin);
+    const regKey = normalizeRegClient(r.reg);
+    return (
+      (vinKey && vehicles.find((v) => normalizeRegClient(v.vin) === vinKey)) ||
+      (regKey && vehicles.find((v) => normalizeRegClient(v.reg) === regKey)) ||
+      null
+    );
+  };
+
+  const applyVehicleMatch = (match) => {
+    setReport((r) => {
+      const prefill = {};
+      for (const field of VEHICLE_PREFILL_FIELDS) {
+        if (!r[field] && match[field]) prefill[field] = match[field];
+      }
+      return { ...r, ...prefill, vehicleId: match.id };
+    });
+    setVehicleNote(`Loaded existing details for ${match.vin || match.reg} — check them before sending.`);
+  };
+
+  const handleVehicleFieldBlur = () => {
     if (report.vehicleId) return; // already linked to a vehicle — don't reassign mid-edit
-    const key = normalizeRegClient(report.reg);
-    if (!key) { setVehicleNote(""); return; }
-    const match = vehicles.find((v) => normalizeRegClient(v.reg) === key);
-    if (match) {
-      setReport((r) => {
-        const prefill = {};
-        for (const field of VEHICLE_PREFILL_FIELDS) {
-          if (!r[field] && match[field]) prefill[field] = match[field];
-        }
-        return { ...r, ...prefill, vehicleId: match.id };
-      });
-      setVehicleNote(`Loaded existing details for ${match.reg} — check them before sending.`);
-    } else {
-      setVehicleNote("New vehicle — its details will be saved for future checks.");
-    }
+    if (!report.vin && !report.reg) { setVehicleNote(""); return; }
+    const match = findVehicleMatch(report);
+    if (match) applyVehicleMatch(match);
+    else setVehicleNote("New vehicle — its details will be saved for future checks.");
+  };
+  const handleRegBlur = handleVehicleFieldBlur;
+  const handleVinBlur = handleVehicleFieldBlur;
+
+  const handleVinScanned = (text) => {
+    setScanningVin(false);
+    setReport((r) => ({ ...r, vin: text }));
+    if (report.vehicleId) return; // already linked — don't reassign mid-edit
+    const match = findVehicleMatch({ ...report, vin: text });
+    if (match) applyVehicleMatch(match);
+    else setVehicleNote("New vehicle — its details will be saved for future checks.");
   };
 
   return (
@@ -977,10 +1006,24 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             <Field label="MAKE & MODEL">
               <TextInput value={report.make} onChange={(v) => set("make", v)} placeholder="e.g. Porsche 911" />
             </Field>
-            <Field label="REGISTRATION / VIN">
+            <Field label="REGISTRATION">
               <TextInput value={report.reg} onChange={(v) => set("reg", v)} onBlur={handleRegBlur} placeholder="e.g. GY 1234" />
             </Field>
           </div>
+          <Field label="VIN">
+            <div className="flex gap-2">
+              <TextInput value={report.vin} onChange={(v) => set("vin", v)} onBlur={handleVinBlur} placeholder="Vehicle Identification Number" />
+              <button
+                type="button"
+                onClick={() => setScanningVin(true)}
+                className="shrink-0 rounded-lg border px-3 flex items-center justify-center"
+                style={{ borderColor: LINE, color: NAVY }}
+                aria-label="Scan VIN barcode"
+              >
+                <ScanLine size={18} />
+              </button>
+            </div>
+          </Field>
           {vehicleNote && (
             <div className="text-xs -mt-2 mb-3" style={{ color: STEEL }}>{vehicleNote}</div>
           )}
@@ -992,14 +1035,9 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
               <TextInput value={report.year} onChange={(v) => set("year", v)} placeholder="e.g. 2022" />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="ODOMETER">
-              <TextInput value={report.odometer} onChange={(v) => set("odometer", v)} placeholder="e.g. 12,400 mi" />
-            </Field>
-            <Field label="STORAGE BAY">
-              <TextInput value={report.bay} onChange={(v) => set("bay", v)} placeholder="e.g. B14" />
-            </Field>
-          </div>
+          <Field label="ODOMETER">
+            <TextInput value={report.odometer} onChange={(v) => set("odometer", v)} placeholder="e.g. 12,400 mi" />
+          </Field>
           {isIntake && (
             <Field label="VAT / SITUS STATUS">
               <TextInput value={report.vatSitus} onChange={(v) => set("vatSitus", v)} placeholder="e.g. VAT paid, EU situs" />
@@ -1067,14 +1105,19 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
 
         <Section title="Storage Environment">
           <div className="grid grid-cols-2 gap-3">
+            <Field label="STORAGE BAY">
+              <TextInput value={report.bay} onChange={(v) => set("bay", v)} placeholder="e.g. B14" />
+            </Field>
+            <Field label="FUEL / CHARGE LEVEL">
+              <Select value={report.fuel} onChange={(v) => set("fuel", v)} options={FUEL_LEVELS} />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <Field label="BATTERY CONDITIONER"><Select value={report.battery} onChange={(v) => set("battery", v)} options={YN} /></Field>
             <Field label="OWN CONDITIONER SUPPLIED"><Select value={report.ownConditioner} onChange={(v) => set("ownConditioner", v)} options={YN} /></Field>
             <Field label="COVER FITTED"><Select value={report.coverFitted} onChange={(v) => set("coverFitted", v)} options={YN} /></Field>
             <Field label="HANDBRAKE OFF"><Select value={report.handbrake} onChange={(v) => set("handbrake", v)} options={YN} /></Field>
           </div>
-          <Field label="FUEL / CHARGE LEVEL">
-            <Select value={report.fuel} onChange={(v) => set("fuel", v)} options={FUEL_LEVELS} />
-          </Field>
 
           {isIntake && (
             <>
@@ -1116,7 +1159,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           <Section title={isIntake ? "Documents & Items Received" : "Documents & Items Returned"}>
             <div className="grid grid-cols-2 gap-3">
               <Field label={isIntake ? "KEYS / FOBS RECEIVED" : "KEYS / FOBS RETURNED"}>
-                <TextInput value={report.items.keysCount} onChange={(v) => setItem("keysCount", v)} placeholder="No." />
+                <Select value={report.items.keysCount} onChange={(v) => setItem("keysCount", v)} options={KEYS_OPTIONS} />
               </Field>
               <Field label={isIntake ? "SERVICE BOOK RECEIVED" : "SERVICE BOOK RETURNED"}>
                 <Select value={report.items.serviceBook} onChange={(v) => setItem("serviceBook", v)} options={YN} />
@@ -1128,19 +1171,24 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="OWNER'S MANUAL PRESENT"><Select value={report.items.ownersManual} onChange={(v) => setItem("ownersManual", v)} options={YN} /></Field>
-              <Field label="PARCEL SHELF / BOOT COVER"><Select value={report.items.parcelShelf} onChange={(v) => setItem("parcelShelf", v)} options={YN} /></Field>
+              <Field label="TRACKER FOB QUANTITY"><Select value={report.items.trackerFobQty} onChange={(v) => setItem("trackerFobQty", v)} options={TRACKER_FOB_OPTIONS} /></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="V5 / REGISTRATION DOC"><Select value={report.items.v5Doc} onChange={(v) => setItem("v5Doc", v)} options={V5_OPTIONS} /></Field>
               <Field label="CHARGING CABLE (EV/HYBRID)"><Select value={report.items.chargingCable} onChange={(v) => setItem("chargingCable", v)} options={CABLE_OPTIONS} /></Field>
             </div>
             {isIntake ? (
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="INSURANCE CONFIRMED"><Select value={report.items.insuranceConfirmed} onChange={(v) => setItem("insuranceConfirmed", v)} options={YN} /></Field>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="INSURANCE CONFIRMED"><Select value={report.items.insuranceConfirmed} onChange={(v) => setItem("insuranceConfirmed", v)} options={YN} /></Field>
+                  <Field label="INSURANCE VALID TO">
+                    <TextInput value={report.items.insuranceValidTo} onChange={(v) => setItem("insuranceValidTo", v)} placeholder="YYYY-MM-DD" />
+                  </Field>
+                </div>
                 <Field label="MOT / INSPECTION VALID TO">
                   <TextInput value={report.items.motValidTo} onChange={(v) => setItem("motValidTo", v)} placeholder="YYYY-MM-DD" />
                 </Field>
-              </div>
+              </>
             ) : (
               <div className="grid grid-cols-2 gap-3">
                 <Field label="BATTERY CONDITIONER REMOVED"><Select value={report.items.batteryConditionerRemoved} onChange={(v) => setItem("batteryConditionerRemoved", v)} options={YN} /></Field>
@@ -1284,6 +1332,16 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           {saving ? "Sending…" : "Send for client sign-off"}
         </button>
       </div>
+
+      {scanningVin && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "black" }}>
+            <Loader2 size={26} className="animate-spin text-white" />
+          </div>
+        }>
+          <VinScannerModal onDetected={handleVinScanned} onClose={() => setScanningVin(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -1958,8 +2016,10 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <SummaryRow label="Keys / fobs received" value={report.items.keysCount} />
               <SummaryRow label="Service book" value={report.items.serviceBook} />
               <SummaryRow label="Spare wheel" value={report.items.spareWheel} />
+              <SummaryRow label="Tracker fob qty" value={report.items.trackerFobQty} />
               <SummaryRow label="V5 / registration doc" value={report.items.v5Doc} />
               <SummaryRow label="Insurance confirmed" value={report.items.insuranceConfirmed} />
+              <SummaryRow label="Insurance valid to" value={report.items.insuranceValidTo} />
               <SummaryRow label="MOT valid to" value={report.items.motValidTo} />
             </div>
             {report.items.otherItems && (
