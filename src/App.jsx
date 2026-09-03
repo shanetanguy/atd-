@@ -72,6 +72,26 @@ function HeldNote({ value }) {
   return <div className="text-[11px] mt-1" style={{ color: OK_GREEN }}>✓ Already held: {value}</div>;
 }
 
+// Item fields that carry a meaningful "count/held at intake" comparison —
+// used both for Intake's HeldNote and Release's mismatch check below.
+const ITEM_COMPARE_FIELDS = [
+  "keysCount", "serviceBook", "spareWheel", "lockingWheelNut",
+  "ownersManual", "trackerFobQty", "v5Doc", "chargingCable",
+];
+
+// A red flag shown on Release when what's being handed back doesn't match
+// what intake recorded — doesn't block anything (staff can still override,
+// e.g. a lost key), it just makes sure the discrepancy isn't silently
+// missed and prompts the reason box below.
+function MismatchNote({ current, held }) {
+  if (!held || !current || held === current) return null;
+  return (
+    <div className="text-[11px] mt-1 flex items-center gap-1" style={{ color: ISSUE_RED }}>
+      <AlertTriangle size={11} /> Intake recorded: {held}
+    </div>
+  );
+}
+
 // A Y/N field that only reveals a reason box when the answer is N — used
 // on Routine for the run-up-to-temperature and mechanical-exercise checks.
 function YesNoReasonField({ label, value, onChange, reason, onReasonChange }) {
@@ -263,6 +283,7 @@ function blankReport() {
     transportCo: "",
     driverName: "",
     collectionRef: "",
+    itemDiscrepancyReason: "",
     // Routine only
     runUpToTemp: "",
     runUpToTempReason: "",
@@ -1079,6 +1100,13 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
     api.fetchVehicles().then(setVehicles).catch(() => {});
   }, []);
 
+  // Intake: shows what's already on file (green). Release: flags when
+  // what's being handed back doesn't match what intake recorded (red).
+  const itemHint = (field) =>
+    isIntake ? <HeldNote value={heldItems?.[field]} /> : isRelease ? <MismatchNote current={report.items[field]} held={heldItems?.[field]} /> : null;
+  const hasItemMismatch =
+    isRelease && !!heldItems && ITEM_COMPARE_FIELDS.some((f) => heldItems[f] && report.items[f] && heldItems[f] !== report.items[f]);
+
   const findVehicleMatch = (r) => {
     const vinKey = normalizeRegClient(r.vin);
     const regKey = normalizeRegClient(r.reg);
@@ -1090,13 +1118,16 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   };
 
   const applyVehicleMatch = (match) => {
-    // A returning car with a prior intake — carry its held items and open
-    // damage forward instead of starting this intake from scratch. Items
-    // are shown as an "already held" reference (handleVehicleFieldBlur's
-    // caller decides isIntake); pins come across as "carried" so the
-    // diagram renders them distinctly from anything marked fresh today.
-    const returning = isIntake && !!match.intakeReportId;
-    if (returning) setHeldItems(match.intakeItems || null);
+    // A returning car with a prior intake — carry data from it forward
+    // instead of starting from scratch. Items only prefill on a new
+    // Intake (Release needs its own fresh count to compare against, not
+    // a copy — see the mismatch check below); damage pins carry onto
+    // the diagram on both Intake and Release, tagged "carried" so they
+    // render distinctly from anything marked fresh today.
+    const hasIntakeOnFile = !!match.intakeReportId;
+    const carryItems = isIntake && hasIntakeOnFile;
+    const carryPins = (isIntake || isRelease) && hasIntakeOnFile;
+    if (match.intakeItems) setHeldItems(match.intakeItems); // Intake: prefill reference. Release: mismatch reference.
     if (match.intakeTyres) setHeldTyres(match.intakeTyres);
 
     setReport((r) => {
@@ -1107,13 +1138,13 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
       let items = r.items;
       let pins = r.pins;
       let interiorPins = r.interiorPins;
-      if (returning) {
-        if (match.intakeItems) {
-          items = { ...r.items };
-          for (const k of Object.keys(items)) {
-            if (!items[k] && match.intakeItems[k]) items[k] = match.intakeItems[k];
-          }
+      if (carryItems && match.intakeItems) {
+        items = { ...r.items };
+        for (const k of Object.keys(items)) {
+          if (!items[k] && match.intakeItems[k]) items[k] = match.intakeItems[k];
         }
+      }
+      if (carryPins) {
         if (r.pins.length === 0 && (match.intakePins || []).length > 0) {
           pins = match.intakePins.map((p) => ({ ...p, origin: "carried", status: p.status || "open" }));
         }
@@ -1125,8 +1156,10 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
     });
 
     setVehicleNote(
-      returning
+      carryItems
         ? `Returning vehicle — loaded its details, held items, and damage from its last intake. Review before sending.`
+        : carryPins
+        ? `Loaded this vehicle's details and its damage diagram from intake — confirm each point and mark any new damage.`
         : `Loaded existing details for ${match.vin || match.reg} — check them before sending.`
     );
   };
@@ -1332,41 +1365,41 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
             <div className="grid grid-cols-2 gap-3">
               <Field label={isIntake ? "KEYS / FOBS RECEIVED" : "KEYS / FOBS RETURNED"}>
                 <Select value={report.items.keysCount} onChange={(v) => setItem("keysCount", v)} options={KEYS_OPTIONS} />
-                <HeldNote value={heldItems?.keysCount} />
+                {itemHint("keysCount")}
               </Field>
               <Field label={isIntake ? "SERVICE BOOK RECEIVED" : "SERVICE BOOK RETURNED"}>
                 <Select value={report.items.serviceBook} onChange={(v) => setItem("serviceBook", v)} options={YN} />
-                <HeldNote value={heldItems?.serviceBook} />
+                {itemHint("serviceBook")}
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="SPARE WHEEL PRESENT">
                 <Select value={report.items.spareWheel} onChange={(v) => setItem("spareWheel", v)} options={SPARE_WHEEL_OPTIONS} />
-                <HeldNote value={heldItems?.spareWheel} />
+                {itemHint("spareWheel")}
               </Field>
               <Field label="LOCKING WHEEL NUT KEY">
                 <Select value={report.items.lockingWheelNut} onChange={(v) => setItem("lockingWheelNut", v)} options={YN} />
-                <HeldNote value={heldItems?.lockingWheelNut} />
+                {itemHint("lockingWheelNut")}
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="OWNER'S MANUAL PRESENT">
                 <Select value={report.items.ownersManual} onChange={(v) => setItem("ownersManual", v)} options={YN} />
-                <HeldNote value={heldItems?.ownersManual} />
+                {itemHint("ownersManual")}
               </Field>
               <Field label="TRACKER FOB QUANTITY">
                 <Select value={report.items.trackerFobQty} onChange={(v) => setItem("trackerFobQty", v)} options={TRACKER_FOB_OPTIONS} />
-                <HeldNote value={heldItems?.trackerFobQty} />
+                {itemHint("trackerFobQty")}
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="V5 / REGISTRATION DOC">
                 <Select value={report.items.v5Doc} onChange={(v) => setItem("v5Doc", v)} options={V5_OPTIONS} />
-                <HeldNote value={heldItems?.v5Doc} />
+                {itemHint("v5Doc")}
               </Field>
               <Field label="CHARGING CABLE (EV/HYBRID)">
                 <Select value={report.items.chargingCable} onChange={(v) => setItem("chargingCable", v)} options={CABLE_OPTIONS} />
-                <HeldNote value={heldItems?.chargingCable} />
+                {itemHint("chargingCable")}
               </Field>
             </div>
             {isIntake ? (
@@ -1404,6 +1437,24 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                 style={inputStyle}
               />
             </Field>
+
+            {hasItemMismatch && (
+              <div className="mt-3 rounded-lg border-2 p-3" style={{ borderColor: ISSUE_RED, background: "#FBE7E5" }}>
+                <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: ISSUE_RED }}>
+                  <AlertTriangle size={14} /> What's being handed back doesn't match intake
+                </div>
+                <Field label="REASON FOR DISCREPANCY *">
+                  <textarea
+                    value={report.itemDiscrepancyReason}
+                    onChange={(e) => set("itemDiscrepancyReason", e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Second key reported lost by client"
+                    className={inputCls}
+                    style={{ borderColor: ISSUE_RED }}
+                  />
+                </Field>
+              </div>
+            )}
           </Section>
         )}
 
@@ -2333,6 +2384,11 @@ function ClientViewScreen({ report, onBack, onRespond }) {
             {report.items.otherItems && (
               <div className="mt-2 text-sm bg-white rounded-lg border p-2.5" style={{ borderColor: LINE, color: INK }}>
                 <span className="font-semibold">Other items: </span>{report.items.otherItems}
+              </div>
+            )}
+            {report.itemDiscrepancyReason && (
+              <div className="mt-2 rounded-lg border-2 p-2.5 text-sm print:break-inside-avoid" style={{ borderColor: ISSUE_RED, background: "#FBE7E5", color: INK }}>
+                <span className="font-semibold" style={{ color: ISSUE_RED }}>Discrepancy from intake: </span>{report.itemDiscrepancyReason}
               </div>
             )}
             <div className="rounded-lg p-3 mt-3 text-xs" style={{ background: `${GOLD}15`, color: STEEL }}>
