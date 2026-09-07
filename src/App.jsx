@@ -2566,7 +2566,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
         </div>
 
         {report.reportType !== "Routine" &&
-          (report.clientType || report.clientName || report.trustCompany || report.contactEmail || report.contactPhone || report.beneficialOwner) && (
+          (report.clientType || report.clientName || report.trustCompany || report.contactEmail || report.contactPhone || report.beneficialOwner || report.vatSitus) && (
           <Section title="Trustee / Client Details">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <SummaryRow label="Client type" value={report.clientType} hideIfBlank />
@@ -2574,7 +2574,10 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <SummaryRow label="Trust / fiduciary company" value={report.trustCompany} hideIfBlank />
               <SummaryRow label="Contact email / phone" value={report.contactEmail} hideIfBlank />
               {report.reportType === "Intake" && (
-                <SummaryRow label="Beneficial owner" value={report.beneficialOwner} hideIfBlank />
+                <>
+                  <SummaryRow label="Beneficial owner" value={report.beneficialOwner} hideIfBlank />
+                  <SummaryRow label="VAT / situs status" value={report.vatSitus} hideIfBlank />
+                </>
               )}
             </div>
           </Section>
@@ -2702,12 +2705,43 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <SummaryRow label="Keys / fobs received" value={report.items.keysCount} />
               <SummaryRow label="Service book" value={report.items.serviceBook} />
               <SummaryRow label="Spare wheel" value={report.items.spareWheel} />
+              <SummaryRow label="Locking wheel nut key" value={report.items.lockingWheelNut} />
+              <SummaryRow label="Owner's manual present" value={report.items.ownersManual} />
               <SummaryRow label="Tracker fob qty" value={report.items.trackerFobQty} />
               <SummaryRow label="V5 / registration doc" value={report.items.v5Doc} />
+              <SummaryRow label="Charging cable (EV/hybrid)" value={report.items.chargingCable} hideIfBlank />
               <SummaryRow label="Insurance confirmed" value={report.items.insuranceConfirmed} />
               <SummaryRow label="Insurance valid to" value={report.items.insuranceValidTo} />
               <SummaryRow label="MOT valid to" value={report.items.motValidTo} />
+              <SummaryRow label="Conditioner make / model" value={report.items.conditionerMakeModel} hideIfBlank />
             </div>
+
+            {TYRE_POSITIONS.some((p) => report.tyres[p.key].factory || report.tyres[p.key].reading) && (
+              <div className="mt-3">
+                <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>FACTORY TYRE PRESSURES</div>
+                <div className="space-y-1.5">
+                  {TYRE_POSITIONS.map((p) => {
+                    const t = report.tyres[p.key];
+                    if (!t.factory && !t.reading) return null;
+                    return (
+                      <div
+                        key={p.key}
+                        className="bg-white rounded-lg border px-3 py-2 flex items-center justify-between text-sm print:break-inside-avoid"
+                        style={{ borderColor: LINE }}
+                      >
+                        <span style={{ color: INK }}>{p.label}</span>
+                        <span style={{ color: STEEL }}>
+                          {t.factory && `Factory: ${t.factory}`}
+                          {t.factory && t.reading ? " · " : ""}
+                          {t.reading && `Set: ${t.reading}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {report.items.otherItems && (
               <div className="mt-2 text-sm bg-white rounded-lg border p-2.5" style={{ borderColor: LINE, color: INK }}>
                 <span className="font-semibold">Other items: </span>{report.items.otherItems}
@@ -2727,9 +2761,51 @@ function ClientViewScreen({ report, onBack, onRespond }) {
               <SummaryRow label="Collection ref. / PO no." value={report.collectionRef} hideIfBlank />
               <SummaryRow label="Keys / fobs returned" value={report.items.keysCount} />
               <SummaryRow label="Service book" value={report.items.serviceBook} />
+              <SummaryRow label="Spare wheel" value={report.items.spareWheel} />
+              <SummaryRow label="Locking wheel nut key" value={report.items.lockingWheelNut} />
+              <SummaryRow label="Owner's manual present" value={report.items.ownersManual} />
+              <SummaryRow label="Tracker fob qty" value={report.items.trackerFobQty} />
+              <SummaryRow label="V5 / registration doc" value={report.items.v5Doc} />
+              <SummaryRow label="Charging cable (EV/hybrid)" value={report.items.chargingCable} hideIfBlank />
               <SummaryRow label="Battery conditioner removed" value={report.items.batteryConditionerRemoved} />
+              <SummaryRow label="Own conditioner returned" value={report.items.ownConditionerReturned} hideIfBlank />
               <SummaryRow label="Insurance confirmed" value={report.items.insuranceConfirmed} />
             </div>
+
+            {TYRE_POSITIONS.some((p) => report.tyres[p.key].factory || report.tyres[p.key].reading || report.tyres[p.key].reset) && (
+              <div className="mt-3">
+                <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>TYRE PRESSURES — RESET TO FACTORY</div>
+                <div className="space-y-1.5">
+                  {TYRE_POSITIONS.map((p) => {
+                    const t = report.tyres[p.key];
+                    if (!t.factory && !t.reading && !t.reset) return null;
+                    return (
+                      <div
+                        key={p.key}
+                        className="bg-white rounded-lg border px-3 py-2 text-sm print:break-inside-avoid"
+                        style={{ borderColor: LINE }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span style={{ color: INK }}>{p.label}</span>
+                          <span
+                            className="text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+                            style={{ background: t.reset ? "#E3F1E7" : "#E8E6DE", color: t.reset ? OK_GREEN : STEEL }}
+                          >
+                            {t.reset ? "Reset to factory" : "Not confirmed"}
+                          </span>
+                        </div>
+                        <div className="mt-0.5" style={{ color: STEEL }}>
+                          {t.factory && `Factory: ${t.factory}`}
+                          {t.factory && t.reading ? " · " : ""}
+                          {t.reading && `Current: ${t.reading}`}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {report.items.otherItems && (
               <div className="mt-2 text-sm bg-white rounded-lg border p-2.5" style={{ borderColor: LINE, color: INK }}>
                 <span className="font-semibold">Other items: </span>{report.items.otherItems}
