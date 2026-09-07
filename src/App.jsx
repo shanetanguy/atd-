@@ -141,12 +141,17 @@ function PinOriginTag({ pin }) {
 }
 
 // Fields that carry over from a vehicle's past reports into a new one for
-// the same car (matched by registration) — identity + client/trustee info
-// that's stable across visits, not visit-specific condition data like
-// odometer or fuel level. Mirrors VEHICLE_FIELDS on the server.
+// the same car (matched by VIN or registration) — identity + client/trustee
+// info that's stable across visits, not visit-specific condition data like
+// odometer or fuel level. Mirrors VEHICLE_FIELDS on the server, plus vin/reg
+// themselves: whichever one staff typed to find the match stays as typed
+// (the prefill loop only ever fills a field that's still blank), but the
+// other one — often not to hand when the vehicle's already on file — gets
+// filled in too instead of staying blank on Routine/Release forms.
 const VEHICLE_PREFILL_FIELDS = [
   "make", "colour", "year", "clientType", "clientName", "trustCompany",
   "contactEmail", "contactPhone", "beneficialOwner", "vatSitus", "bay",
+  "vin", "reg",
 ];
 
 function normalizeRegClient(reg) {
