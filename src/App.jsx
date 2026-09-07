@@ -1354,6 +1354,10 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
     const hasIntakeOnFile = !!match.intakeReportId;
     const carryItems = isIntake && hasIntakeOnFile;
     const carryPins = (isIntake || isRelease) && hasIntakeOnFile;
+    // Factory pressures are a fixed vehicle spec, not a per-visit reading —
+    // once they're on file from intake there's no reason to retype them on
+    // release (or on a returning car's next intake).
+    const carryTyreFactory = (isIntake || isRelease) && hasIntakeOnFile;
     if (match.intakeItems) setHeldItems(match.intakeItems); // Intake: prefill reference. Release: mismatch reference.
     if (match.intakeTyres) setHeldTyres(match.intakeTyres);
 
@@ -1365,6 +1369,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
       let items = r.items;
       let pins = r.pins;
       let interiorPins = r.interiorPins;
+      let tyres = r.tyres;
       if (carryItems && match.intakeItems) {
         items = { ...r.items };
         for (const k of Object.keys(items)) {
@@ -1379,14 +1384,23 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           interiorPins = match.intakeInteriorPins.map((p) => ({ ...p, origin: "carried", status: p.status || "open" }));
         }
       }
-      return { ...r, ...prefill, items, pins, interiorPins, vehicleId: match.id };
+      if (carryTyreFactory && match.intakeTyres) {
+        tyres = { ...r.tyres };
+        for (const p of TYRE_POSITIONS) {
+          const factory = match.intakeTyres[p.key]?.factory;
+          if (factory && !tyres[p.key].factory) {
+            tyres[p.key] = { ...tyres[p.key], factory };
+          }
+        }
+      }
+      return { ...r, ...prefill, items, pins, interiorPins, tyres, vehicleId: match.id };
     });
 
     setVehicleNote(
       carryItems
         ? `Returning vehicle — loaded its details, held items, and damage from its last intake. Review before sending.`
         : carryPins
-        ? `Loaded this vehicle's details and its damage diagram from intake — confirm each point and mark any new damage.`
+        ? `Loaded this vehicle's details, factory tyre pressures, and its damage diagram from intake — confirm each point and mark any new damage.`
         : `Loaded existing details for ${match.vin || match.reg} — check them before sending.`
     );
   };
