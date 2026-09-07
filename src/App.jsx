@@ -260,6 +260,23 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// The signed-in device's own last-used inspector name — not vehicle data,
+// just a convenience so the same staff member isn't retyping their name on
+// every single report. Persisted per-browser, not per-account.
+const INSPECTOR_NAME_KEY = "atd:lastInspectorName";
+function getLastInspectorName() {
+  try {
+    return localStorage.getItem(INSPECTOR_NAME_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function setLastInspectorName(name) {
+  try {
+    if (name) localStorage.setItem(INSPECTOR_NAME_KEY, name);
+  } catch {}
+}
+
 function blankReport() {
   return {
     id: genId(),
@@ -268,7 +285,7 @@ function blankReport() {
     reportType: "Routine",
     clientType: "Individual",
     date: todayISO(),
-    inspectedBy: "",
+    inspectedBy: getLastInspectorName(),
     clientName: "",
     trustCompany: "",
     contactEmail: "",
@@ -321,6 +338,11 @@ function blankReport() {
     // from "overlooked".
     noExteriorDamage: false,
     noInteriorDamage: false,
+    // The inspector's own confirmation that they completed this report,
+    // captured just before it goes to the client — separate from the free-
+    // text "Inspected By" name field, which can be edited at any point
+    // while the report's still being filled in.
+    inspectorSignoff: null,
     clientResponse: null,
   };
 }
@@ -421,6 +443,29 @@ function StatusChip({ status }) {
     >
       <Icon size={12} /> {s.label}
     </span>
+  );
+}
+
+// Sits in the TopBar of the editor/diagram screens so staff can see their
+// work is safely on the server, not just sitting in the browser tab.
+function DraftSaveIndicator({ status }) {
+  if (status === "idle") return null;
+  const map = {
+    pending: { label: "Unsaved changes", icon: Clock },
+    saving: { label: "Saving…", icon: Loader2 },
+    saved: { label: "Draft saved", icon: CheckCircle2 },
+    error: { label: "Save failed — will retry", icon: AlertTriangle },
+  };
+  const s = map[status] || map.pending;
+  const Icon = s.icon;
+  return (
+    <div
+      className="flex items-center gap-1 text-[11px] font-medium"
+      style={{ color: status === "error" ? "#F2A99C" : "rgba(255,255,255,0.75)" }}
+    >
+      <Icon size={11} className={status === "saving" ? "animate-spin" : ""} />
+      {s.label}
+    </div>
   );
 }
 
@@ -1173,10 +1218,56 @@ function DamageCheckGateModal({
   );
 }
 
+// Shown once the damage diagrams are clear, right before a report actually
+// goes to the client — the inspector confirms their own name and signs,
+// the same way the client later confirms/disputes with a signature. Keeps
+// accountability for what got sent, not just for what got typed.
+function InspectorSignoffModal({ name, onConfirm, onClose, saving }) {
+  const [localName, setLocalName] = useState(name || "");
+  const [signature, setSignature] = useState(null);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(11,37,69,0.45)" }}
+      onClick={onClose}
+    >
+      <div className="bg-white w-full max-w-sm rounded-2xl p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-2">
+          <ShieldCheck size={20} style={{ color: NAVY }} />
+          <div className="font-semibold text-lg" style={{ color: NAVY }}>Inspector sign-off</div>
+        </div>
+        <div className="text-sm mb-4" style={{ color: STEEL }}>
+          Confirm you've completed this inspection before it's sent for client sign-off.
+        </div>
+
+        <div className="text-xs font-semibold mb-1.5" style={{ color: STEEL }}>INSPECTED BY</div>
+        <TextInput value={localName} onChange={setLocalName} placeholder="Your name" />
+
+        <div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: STEEL }}>SIGNATURE</div>
+        <SignaturePad onChange={setSignature} />
+
+        <button
+          onClick={() => onConfirm(localName.trim(), signature)}
+          disabled={!localName.trim() || !signature || saving}
+          className="w-full mt-4 rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-40 flex items-center justify-center gap-2"
+          style={{ background: NAVY }}
+        >
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          {saving ? "Sending…" : "Confirm & send"}
+        </button>
+        <button onClick={onClose} className="w-full mt-2 rounded-lg py-2.5 text-sm font-semibold" style={{ color: STEEL }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------------------------------------------------
    Inspection editor
 ----------------------------------------------------------------*/
-function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInteriorDiagram, onSubmit, saving }) {
+function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInteriorDiagram, onSubmit, saving, draftSaveStatus }) {
   const set = (k, v) => setReport((r) => ({ ...r, [k]: v }));
   const setChecklistField = (item, field, v) =>
     setReport((r) => ({
@@ -1202,6 +1293,20 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
   const exteriorChecked = isRoutine || hasFreshPin(report.pins) || report.noExteriorDamage;
   const interiorChecked = isRoutine || hasFreshPin(report.interiorPins) || report.noInteriorDamage;
   const [showDamageGate, setShowDamageGate] = useState(false);
+  const [showInspectorSignoff, setShowInspectorSignoff] = useState(false);
+
+  // Runs once both diagrams are clear. Inspector sign-off is the last gate —
+  // ask for it if this report hasn't been signed off yet, otherwise it's
+  // already been confirmed (e.g. going straight through after "No damage
+  // present" resolved the last outstanding diagram) and can go straight out.
+  // Takes an optional explicit report — a caller that just queued its own
+  // setReport() update in this same event (e.g. the damage gate's combined
+  // resolve) needs its result checked directly, since `report` itself won't
+  // reflect that update until the next render.
+  const proceedToSubmit = (nextReport = report) => {
+    if (!nextReport.inspectorSignoff) { setShowInspectorSignoff(true); return; }
+    onSubmit(nextReport);
+  };
 
   // Vehicles this business has already seen — used to auto-fill this report
   // from a past one for the same car, so staff aren't retyping the client/
@@ -1307,7 +1412,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
 
   return (
     <div className="pb-28">
-      <TopBar title="New Inspection" onBack={onBack} />
+      <TopBar title="New Inspection" onBack={onBack} right={<DraftSaveIndicator status={draftSaveStatus} />} />
       <div className="p-4">
         <Section title="Report & Vehicle">
           <div className="grid grid-cols-2 gap-3">
@@ -1777,7 +1882,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
         <button
           onClick={() => {
             if (!exteriorChecked || !interiorChecked) setShowDamageGate(true);
-            else onSubmit();
+            else proceedToSubmit();
           }}
           disabled={saving}
           className="w-full rounded-xl py-3.5 text-white font-semibold flex items-center justify-center gap-2"
@@ -1797,14 +1902,35 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           onGoExterior={() => { setShowDamageGate(false); onOpenDiagram(); }}
           onGoInterior={() => { setShowDamageGate(false); onOpenInteriorDiagram(); }}
           onNoExteriorDamage={() => {
-            setReport((r) => ({ ...r, noExteriorDamage: true }));
-            if (interiorChecked) { setShowDamageGate(false); onSubmit(); }
+            const next = { ...report, noExteriorDamage: true };
+            setReport(next);
+            if (interiorChecked) { setShowDamageGate(false); proceedToSubmit(next); }
           }}
           onNoInteriorDamage={() => {
-            setReport((r) => ({ ...r, noInteriorDamage: true }));
-            if (exteriorChecked) { setShowDamageGate(false); onSubmit(); }
+            const next = { ...report, noInteriorDamage: true };
+            setReport(next);
+            if (exteriorChecked) { setShowDamageGate(false); proceedToSubmit(next); }
           }}
           onClose={() => setShowDamageGate(false)}
+        />
+      )}
+
+      {showInspectorSignoff && (
+        <InspectorSignoffModal
+          name={report.inspectedBy}
+          saving={saving}
+          onConfirm={(name, signature) => {
+            setLastInspectorName(name);
+            const next = {
+              ...report,
+              inspectedBy: name,
+              inspectorSignoff: { name, signature, date: new Date().toISOString() },
+            };
+            setReport(next);
+            setShowInspectorSignoff(false);
+            onSubmit(next);
+          }}
+          onClose={() => setShowInspectorSignoff(false)}
         />
       )}
 
@@ -1838,7 +1964,7 @@ function Section({ title, children }) {
 /* ---------------------------------------------------------------
    Diagram screen
 ----------------------------------------------------------------*/
-function DiagramScreen({ report, setReport, onBack }) {
+function DiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
   const [activePinId, setActivePinId] = useState(null);
   const [nextNumbers, setNextNumbers] = useState({});
 
@@ -1870,7 +1996,7 @@ function DiagramScreen({ report, setReport, onBack }) {
 
   return (
     <div>
-      <TopBar title="Damage Diagram" onBack={onBack} />
+      <TopBar title="Damage Diagram" onBack={onBack} right={<DraftSaveIndicator status={draftSaveStatus} />} />
       <div className="p-4">
         <CarDiagram
           pins={report.pins}
@@ -1952,7 +2078,7 @@ function DiagramScreen({ report, setReport, onBack }) {
   );
 }
 
-function InteriorDiagramScreen({ report, setReport, onBack }) {
+function InteriorDiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
   const [activePinId, setActivePinId] = useState(null);
 
   const addPin = (x, y) => {
@@ -1983,7 +2109,7 @@ function InteriorDiagramScreen({ report, setReport, onBack }) {
 
   return (
     <div>
-      <TopBar title="Interior Diagram" onBack={onBack} />
+      <TopBar title="Interior Diagram" onBack={onBack} right={<DraftSaveIndicator status={draftSaveStatus} />} />
       <div className="p-4">
         <InteriorDiagram
           pins={report.interiorPins}
@@ -2658,6 +2784,28 @@ function ClientViewScreen({ report, onBack, onRespond }) {
           </Section>
         )}
 
+        {report.inspectorSignoff && (
+          <Section title="Inspector Sign-off">
+            <div className="flex items-start gap-2">
+              <ShieldCheck size={18} style={{ color: NAVY }} className="shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold text-sm" style={{ color: INK }}>{report.inspectorSignoff.name}</div>
+                <div className="text-xs mt-0.5" style={{ color: STEEL }}>
+                  {new Date(report.inspectorSignoff.date).toLocaleString()}
+                </div>
+              </div>
+            </div>
+            {report.inspectorSignoff.signature && (
+              <img
+                src={report.inspectorSignoff.signature}
+                alt="Inspector signature"
+                className="mt-3 rounded-lg border bg-white"
+                style={{ borderColor: LINE, maxWidth: 240, height: "auto" }}
+              />
+            )}
+          </Section>
+        )}
+
         {alreadyResponded ? (
           <div
             className="rounded-xl p-4 flex items-start gap-3 print:break-inside-avoid"
@@ -2786,6 +2934,44 @@ export default function App() {
   const [clientViewOrigin, setClientViewOrigin] = useState("clientAccess");
   const [openingDocId, setOpeningDocId] = useState(null);
 
+  // Background autosave: a draft report used to only ever reach the server
+  // once staff hit "Send for client sign-off" — everything before that was
+  // purely local state, so a dropped tab or a phone call that killed the
+  // browser lost the lot. Debounce edits to the server, and also flush
+  // immediately the moment the tab is backgrounded (visibilitychange) since
+  // that's exactly the moment work is most likely to get interrupted.
+  const [draftSaveStatus, setDraftSaveStatus] = useState("idle"); // idle | pending | saving | saved | error
+  const reportRef = useRef(report);
+  reportRef.current = report;
+  const savingRef = useRef(saving);
+  savingRef.current = saving;
+
+  const flushDraftSave = useCallback(async () => {
+    const current = reportRef.current;
+    if (!current || current.status !== "draft" || savingRef.current) return;
+    setDraftSaveStatus("saving");
+    try {
+      await api.saveReportApi(current);
+      setDraftSaveStatus("saved");
+    } catch (e) {
+      setDraftSaveStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authed || !report || report.status !== "draft") return;
+    setDraftSaveStatus("pending");
+    const t = setTimeout(flushDraftSave, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report, authed]);
+
+  useEffect(() => {
+    const onVisibility = () => { if (document.hidden) flushDraftSave(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [flushDraftSave]);
+
   useEffect(() => {
     (async () => {
       // A real client link: /sign/<code>. No staff login involved — the
@@ -2843,6 +3029,7 @@ export default function App() {
 
   const startNew = () => {
     setReport(blankReport());
+    setDraftSaveStatus("idle");
     setView("edit");
   };
 
@@ -2850,14 +3037,21 @@ export default function App() {
     try {
       const r = await api.fetchReport(id);
       setReport(normalizeReport(r));
+      setDraftSaveStatus("idle");
       setView("edit");
     } catch (e) {}
   };
 
-  const submitReport = async () => {
+  // Accepts an optional explicit report object for the rare case where the
+  // caller just queued a setReport() update of its own in the same event
+  // (e.g. resolving the last outstanding damage-gate item, or confirming
+  // inspector sign-off) and then immediately submits — that queued update
+  // hasn't committed to this component's `report` state yet, so reading
+  // `report` here would still see the pre-update value.
+  const submitReport = async (reportOverride) => {
     setSaving(true);
     try {
-      const submitted = { ...report, status: "awaiting_signoff" };
+      const submitted = { ...(reportOverride || report), status: "awaiting_signoff" };
       const saved = await api.saveReportApi(submitted);
       setReport(saved);
       await refreshIndex();
@@ -2934,6 +3128,7 @@ export default function App() {
             onOpenInteriorDiagram={() => setView("interiorDiagram")}
             onSubmit={submitReport}
             saving={saving}
+            draftSaveStatus={draftSaveStatus}
           />
         )}
 
@@ -2942,6 +3137,7 @@ export default function App() {
             report={report}
             setReport={setReport}
             onBack={() => setView("edit")}
+            draftSaveStatus={draftSaveStatus}
           />
         )}
 
@@ -2950,6 +3146,7 @@ export default function App() {
             report={report}
             setReport={setReport}
             onBack={() => setView("edit")}
+            draftSaveStatus={draftSaveStatus}
           />
         )}
 
