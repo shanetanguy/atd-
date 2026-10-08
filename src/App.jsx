@@ -7,7 +7,7 @@ import {
   Camera, MapPin, Check, X, ChevronLeft, Plus, Link2, Trash2,
   Car, ClipboardList, Send, ShieldCheck, AlertTriangle, Loader2,
   ChevronRight, Copy, CheckCircle2, XCircle, Clock, FileText, Download,
-  Armchair, ScanLine
+  Armchair, ScanLine, ZoomIn, ZoomOut
 } from "lucide-react";
 
 const VinScannerModal = lazy(() => import("./VinScannerModal.jsx"));
@@ -564,8 +564,30 @@ function panelLabel(key) {
   return { front: "Front", rear: "Rear", roof: "Roof", side: "Side" }[key];
 }
 
+// How far (in canvas units) a tap that misses every panel's exact box is
+// still allowed to snap to the nearest one. Panels sit with real gaps
+// between them (e.g. the narrow "roof" zone in the middle of the top band,
+// and the gap between the top band and the side-profile band below it) —
+// without this, a tap that's close but not precisely inside a panel is a
+// silent no-op, which is exactly what makes the middle of the diagram feel
+// unresponsive on a touchscreen.
+const ZONE_SNAP_MARGIN = 50;
+
+function nearestPanel(px, py) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const [key, p] of Object.entries(PANELS)) {
+    const cx = Math.max(p.x, Math.min(px, p.x + p.w));
+    const cy = Math.max(p.y, Math.min(py, p.y + p.h));
+    const dist = Math.hypot(px - cx, py - cy);
+    if (dist < bestDist) { bestDist = dist; best = key; }
+  }
+  return bestDist <= ZONE_SNAP_MARGIN ? best : null;
+}
+
 function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
   const svgRef = useRef(null);
+  const [zoomed, setZoomed] = useState(false);
 
   const handleTap = (e) => {
     if (readOnly) return;
@@ -580,58 +602,82 @@ function CarDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
     for (const [key, p] of Object.entries(PANELS)) {
       if (px >= p.x && px <= p.x + p.w && py >= p.y && py <= p.y + p.h) { hit = key; break; }
     }
+    if (!hit) hit = nearestPanel(px, py);
     if (!hit) return;
     const p = PANELS[hit];
-    const x = ((px - p.x) / p.w) * 100;
-    const y = ((py - p.y) / p.h) * 100;
+    // Clamp into the panel — a snapped tap can land outside its box, and
+    // without this the pin would render off the panel it's attached to.
+    const x = Math.max(0, Math.min(100, ((px - p.x) / p.w) * 100));
+    const y = Math.max(0, Math.min(100, ((py - p.y) / p.h) * 100));
     onAddPin(hit, x, y);
   };
 
   return (
     <div className="relative select-none" style={{ touchAction: "manipulation" }}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
-        onClick={handleTap}
-        className="w-full h-auto rounded-xl"
-        style={{ background: "white", border: `1px solid ${LINE}`, cursor: readOnly ? "default" : "crosshair" }}
-      >
-        <defs>
-          <g id="atd-car-art" fill={NAVY} dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }} />
-        </defs>
+      <div style={{ overflowX: zoomed ? "auto" : "visible" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
+          onClick={handleTap}
+          className="h-auto rounded-xl"
+          style={{
+            width: zoomed ? "180%" : "100%",
+            maxWidth: zoomed ? "none" : "100%",
+            background: "white",
+            border: `1px solid ${LINE}`,
+            cursor: readOnly ? "default" : "crosshair",
+          }}
+        >
+          <defs>
+            <g id="atd-car-art" fill={NAVY} dangerouslySetInnerHTML={{ __html: CAR_ART_PATHS }} />
+          </defs>
 
-        <rect x={CARD_X} y={CARD_Y} width={CARD_W} height={CARD_H} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
-        <text x={artX} y={CARD_Y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">VEHICLE DIAGRAM</text>
+          <rect x={CARD_X} y={CARD_Y} width={CARD_W} height={CARD_H} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
+          <text x={artX} y={CARD_Y + CARD_PAD + 9} fontSize="11" fill={STEEL} fontWeight="600">VEHICLE DIAGRAM</text>
 
-        {/* the whole source artwork, unmodified — no cropping, no mirroring */}
-        <svg x={artX} y={artY} width={artW} height={artH} viewBox={`0 0 ${ART_VB.w} ${ART_VB.h}`} overflow="hidden">
-          <use href="#atd-car-art" />
+          {/* the whole source artwork, unmodified — no cropping, no mirroring */}
+          <svg x={artX} y={artY} width={artW} height={artH} viewBox={`0 0 ${ART_VB.w} ${ART_VB.h}`} overflow="hidden">
+            <use href="#atd-car-art" />
+          </svg>
+
+          {pins.map((pin) => {
+            const p = PANELS[pin.panel];
+            if (!p) return null;
+            const cx = p.x + (pin.x / 100) * p.w;
+            const cy = p.y + (pin.y / 100) * p.h;
+            const isActive = activePinId === pin.id;
+            return (
+              <g
+                key={pin.id}
+                transform={`translate(${cx}, ${cy})`}
+                onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
+                style={{ cursor: "pointer" }}
+              >
+                <circle r={isActive ? 12 : 9} fill={pinColor(pin)} stroke="white" strokeWidth="2" />
+                <text y="3.5" fontSize="9" fill="white" textAnchor="middle" fontWeight="700">
+                  {pin.code}{pin.number}
+                </text>
+              </g>
+            );
+          })}
         </svg>
-
-        {pins.map((pin) => {
-          const p = PANELS[pin.panel];
-          if (!p) return null;
-          const cx = p.x + (pin.x / 100) * p.w;
-          const cy = p.y + (pin.y / 100) * p.h;
-          const isActive = activePinId === pin.id;
-          return (
-            <g
-              key={pin.id}
-              transform={`translate(${cx}, ${cy})`}
-              onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
-              style={{ cursor: "pointer" }}
-            >
-              <circle r={isActive ? 14 : 11} fill={pinColor(pin)} stroke="white" strokeWidth="2.5" />
-              <text y="4" fontSize="10" fill="white" textAnchor="middle" fontWeight="700">
-                {pin.code}{pin.number}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+      </div>
       {!readOnly && (
-        <div className="text-center text-xs mt-2" style={{ color: STEEL }}>
-          Tap any panel — front, roof, rear, or side — to mark a point of damage
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <div className="text-xs" style={{ color: STEEL }}>
+            {zoomed
+              ? "Scroll to reach every panel — tap to mark a point"
+              : "Tap any panel — front, roof, rear, or side — to mark a point of damage"}
+          </div>
+          <button
+            type="button"
+            onClick={() => setZoomed((z) => !z)}
+            className="shrink-0 flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold"
+            style={{ borderColor: LINE, color: NAVY }}
+          >
+            {zoomed ? <ZoomOut size={13} /> : <ZoomIn size={13} />}
+            {zoomed ? "Zoom out" : "Zoom in to place precisely"}
+          </button>
         </div>
       )}
     </div>
@@ -658,6 +704,7 @@ const INTERIOR_CANVAS_H = iCardY + iCardH + iCardY;
 
 function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin }) {
   const svgRef = useRef(null);
+  const [zoomed, setZoomed] = useState(false);
 
   const handleTap = (e) => {
     if (readOnly) return;
@@ -668,54 +715,81 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
     const px = ((clientX - rect.left) / rect.width) * CANVAS_W;
     const py = ((clientY - rect.top) / rect.height) * INTERIOR_CANVAS_H;
 
-    if (px < interiorArtX || px > interiorArtX + interiorArtW || py < interiorArtY || py > interiorArtY + interiorArtH) return;
-    const x = ((px - interiorArtX) / interiorArtW) * 100;
-    const y = ((py - interiorArtY) / interiorArtH) * 100;
+    // Clamp into the image instead of rejecting a near-miss tap just
+    // outside its edge — same reasoning as the exterior diagram's zone
+    // snapping: a near-miss shouldn't be a silent no-op.
+    if (
+      px < interiorArtX - ZONE_SNAP_MARGIN || px > interiorArtX + interiorArtW + ZONE_SNAP_MARGIN ||
+      py < interiorArtY - ZONE_SNAP_MARGIN || py > interiorArtY + interiorArtH + ZONE_SNAP_MARGIN
+    ) return;
+    const cx = Math.max(interiorArtX, Math.min(px, interiorArtX + interiorArtW));
+    const cy = Math.max(interiorArtY, Math.min(py, interiorArtY + interiorArtH));
+    const x = ((cx - interiorArtX) / interiorArtW) * 100;
+    const y = ((cy - interiorArtY) / interiorArtH) * 100;
     onAddPin(x, y);
   };
 
   return (
     <div className="relative select-none" style={{ touchAction: "manipulation" }}>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${CANVAS_W} ${INTERIOR_CANVAS_H}`}
-        onClick={handleTap}
-        className="w-full h-auto rounded-xl"
-        style={{ background: "white", border: `1px solid ${LINE}`, cursor: readOnly ? "default" : "crosshair" }}
-      >
-        <rect x={iCardX} y={iCardY} width={iCardW} height={iCardH} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
-        <text x={interiorArtX} y={iCardY + iCardPad + 9} fontSize="11" fill={STEEL} fontWeight="600">INTERIOR DIAGRAM</text>
-        <image
-          href={interiorArt}
-          x={interiorArtX}
-          y={interiorArtY}
-          width={interiorArtW}
-          height={interiorArtH}
-          preserveAspectRatio="xMidYMid meet"
-        />
+      <div style={{ overflowX: zoomed ? "auto" : "visible" }}>
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${CANVAS_W} ${INTERIOR_CANVAS_H}`}
+          onClick={handleTap}
+          className="h-auto rounded-xl"
+          style={{
+            width: zoomed ? "180%" : "100%",
+            maxWidth: zoomed ? "none" : "100%",
+            background: "white",
+            border: `1px solid ${LINE}`,
+            cursor: readOnly ? "default" : "crosshair",
+          }}
+        >
+          <rect x={iCardX} y={iCardY} width={iCardW} height={iCardH} rx="12" fill="white" stroke={LINE} strokeWidth="1.5" />
+          <text x={interiorArtX} y={iCardY + iCardPad + 9} fontSize="11" fill={STEEL} fontWeight="600">INTERIOR DIAGRAM</text>
+          <image
+            href={interiorArt}
+            x={interiorArtX}
+            y={interiorArtY}
+            width={interiorArtW}
+            height={interiorArtH}
+            preserveAspectRatio="xMidYMid meet"
+          />
 
-        {pins.map((pin) => {
-          const cx = interiorArtX + (pin.x / 100) * interiorArtW;
-          const cy = interiorArtY + (pin.y / 100) * interiorArtH;
-          const isActive = activePinId === pin.id;
-          return (
-            <g
-              key={pin.id}
-              transform={`translate(${cx}, ${cy})`}
-              onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
-              style={{ cursor: "pointer" }}
-            >
-              <circle r={isActive ? 14 : 11} fill={pinColor(pin)} stroke="white" strokeWidth="2.5" />
-              <text y="4" fontSize="10" fill="white" textAnchor="middle" fontWeight="700">
-                {pin.code}{pin.number}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+          {pins.map((pin) => {
+            const cx = interiorArtX + (pin.x / 100) * interiorArtW;
+            const cy = interiorArtY + (pin.y / 100) * interiorArtH;
+            const isActive = activePinId === pin.id;
+            return (
+              <g
+                key={pin.id}
+                transform={`translate(${cx}, ${cy})`}
+                onClick={(e) => { e.stopPropagation(); onSelectPin && onSelectPin(pin.id); }}
+                style={{ cursor: "pointer" }}
+              >
+                <circle r={isActive ? 12 : 9} fill={pinColor(pin)} stroke="white" strokeWidth="2" />
+                <text y="3.5" fontSize="9" fill="white" textAnchor="middle" fontWeight="700">
+                  {pin.code}{pin.number}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
       {!readOnly && (
-        <div className="text-center text-xs mt-2" style={{ color: STEEL }}>
-          Tap anywhere on the interior to mark a point of damage
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <div className="text-xs" style={{ color: STEEL }}>
+            {zoomed ? "Scroll to reach every area — tap to mark a point" : "Tap anywhere on the interior to mark a point of damage"}
+          </div>
+          <button
+            type="button"
+            onClick={() => setZoomed((z) => !z)}
+            className="shrink-0 flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-semibold"
+            style={{ borderColor: LINE, color: NAVY }}
+          >
+            {zoomed ? <ZoomOut size={13} /> : <ZoomIn size={13} />}
+            {zoomed ? "Zoom out" : "Zoom in to place precisely"}
+          </button>
         </div>
       )}
     </div>
