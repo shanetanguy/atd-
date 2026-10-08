@@ -26,7 +26,9 @@ const INK = "#151515";
 const OK_GREEN = "#2F7D4F";
 const ISSUE_RED = "#B3261E";
 
-const DAMAGE_CODES = [
+// Interior damage uses its own vocabulary (rip/tear, stained/soiled — things
+// that happen to upholstery, not bodywork) and keeps the current scheme.
+const INTERIOR_DAMAGE_CODES = [
   { code: "S", label: "Scratch", color: "#C9932F" },
   { code: "SC", label: "Scuff", color: "#B8730C" },
   { code: "RT", label: "Rip / Tear", color: "#B3261E" },
@@ -34,10 +36,11 @@ const DAMAGE_CODES = [
   { code: "BM", label: "Broken / Missing Part", color: "#3A3A3A" },
 ];
 
-// Codes used before the damage-type rename — not offered in the picker
-// anymore, but kept here so pins saved under the old scheme still show
-// their original label/color instead of silently relabeling as "Scratch".
-const LEGACY_DAMAGE_CODES = [
+// Exterior damage reverted to its original body-damage vocabulary — these
+// codes were briefly replaced by INTERIOR_DAMAGE_CODES's scheme across both
+// diagrams, but exterior went back to naming damage the way bodywork
+// actually gets described (chip, dent, paint loss, crack, missing part).
+const EXTERIOR_DAMAGE_CODES = [
   { code: "C", label: "Chip", color: "#B8730C" },
   { code: "D", label: "Dent", color: "#B3261E" },
   { code: "P", label: "Paint / Colour Loss", color: "#8E4EC6" },
@@ -45,11 +48,15 @@ const LEGACY_DAMAGE_CODES = [
   { code: "M", label: "Missing Part", color: "#3A3A3A" },
 ];
 
+// A pin only ever stores its code, not which diagram it came from, so
+// resolving a pin's label/color for display (summary lists, client view,
+// PDF) has to check both vocabularies — exterior and interior codes never
+// overlap, so this is always unambiguous.
 function damageCodeFor(code) {
   return (
-    DAMAGE_CODES.find((d) => d.code === code) ||
-    LEGACY_DAMAGE_CODES.find((d) => d.code === code) ||
-    DAMAGE_CODES[0]
+    INTERIOR_DAMAGE_CODES.find((d) => d.code === code) ||
+    EXTERIOR_DAMAGE_CODES.find((d) => d.code === code) ||
+    EXTERIOR_DAMAGE_CODES[0]
   );
 }
 
@@ -799,8 +806,8 @@ function InteriorDiagram({ pins, onAddPin, readOnly, activePinId, onSelectPin })
 /* ---------------------------------------------------------------
    Pin editor sheet
 ----------------------------------------------------------------*/
-function PinSheet({ pin, onSave, onDelete, onClose, inspectedBy }) {
-  const [code, setCode] = useState(pin.code || "S");
+function PinSheet({ pin, codes, onSave, onDelete, onClose, inspectedBy }) {
+  const [code, setCode] = useState(pin.code || codes[0].code);
   const [note, setNote] = useState(pin.note || "");
   const [photo, setPhoto] = useState(pin.photo || null);
   const [status, setStatus] = useState(pin.status || "open");
@@ -879,7 +886,7 @@ function PinSheet({ pin, onSave, onDelete, onClose, inspectedBy }) {
 
         <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>TYPE</div>
         <div className="grid grid-cols-3 gap-2 mb-4">
-          {DAMAGE_CODES.map((d) => (
+          {codes.map((d) => (
             <button
               key={d.code}
               onClick={() => setCode(d.code)}
@@ -2063,8 +2070,9 @@ function DiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
 
   const addPin = (panel, x, y) => {
     const id = genId(5);
-    const count = (report.pins.filter((p) => p.code === "S").length) + 1;
-    const newPin = { id, panel, x, y, code: "S", number: count, note: "", photo: null };
+    const defaultCode = EXTERIOR_DAMAGE_CODES[0].code;
+    const count = (report.pins.filter((p) => p.code === defaultCode).length) + 1;
+    const newPin = { id, panel, x, y, code: defaultCode, number: count, note: "", photo: null };
     setReport((r) => ({ ...r, pins: [...r.pins, newPin], noExteriorDamage: false }));
     setActivePinId(id);
   };
@@ -2099,7 +2107,7 @@ function DiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
         />
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {DAMAGE_CODES.map((d) => (
+          {EXTERIOR_DAMAGE_CODES.map((d) => (
             <div key={d.code} className="flex items-center gap-1.5 text-xs">
               <span className="w-3 h-3 rounded-full inline-block" style={{ background: d.color }} />
               <span style={{ color: STEEL }}>{d.code} {d.label}</span>
@@ -2161,6 +2169,7 @@ function DiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
       {activePin && (
         <PinSheet
           pin={activePin}
+          codes={EXTERIOR_DAMAGE_CODES}
           onSave={savePin}
           onDelete={deletePin}
           onClose={() => setActivePinId(null)}
@@ -2176,8 +2185,9 @@ function InteriorDiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
 
   const addPin = (x, y) => {
     const id = genId(5);
-    const count = (report.interiorPins.filter((p) => p.code === "S").length) + 1;
-    const newPin = { id, x, y, code: "S", number: count, note: "", photo: null };
+    const defaultCode = INTERIOR_DAMAGE_CODES[0].code;
+    const count = (report.interiorPins.filter((p) => p.code === defaultCode).length) + 1;
+    const newPin = { id, x, y, code: defaultCode, number: count, note: "", photo: null };
     setReport((r) => ({ ...r, interiorPins: [...r.interiorPins, newPin], noInteriorDamage: false }));
     setActivePinId(id);
   };
@@ -2212,7 +2222,7 @@ function InteriorDiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
         />
 
         <div className="mt-4 flex flex-wrap gap-2">
-          {DAMAGE_CODES.map((d) => (
+          {INTERIOR_DAMAGE_CODES.map((d) => (
             <div key={d.code} className="flex items-center gap-1.5 text-xs">
               <span className="w-3 h-3 rounded-full inline-block" style={{ background: d.color }} />
               <span style={{ color: STEEL }}>{d.code} {d.label}</span>
@@ -2274,6 +2284,7 @@ function InteriorDiagramScreen({ report, setReport, onBack, draftSaveStatus }) {
       {activePin && (
         <PinSheet
           pin={activePin}
+          codes={INTERIOR_DAMAGE_CODES}
           onSave={savePin}
           onDelete={deletePin}
           onClose={() => setActivePinId(null)}
