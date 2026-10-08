@@ -41,6 +41,7 @@ const INTERIOR_DAMAGE_CODES = [
 // diagrams, but exterior went back to naming damage the way bodywork
 // actually gets described (chip, dent, paint loss, crack, missing part).
 const EXTERIOR_DAMAGE_CODES = [
+  { code: "SS", label: "Scratch / Scuff", color: "#C9932F" },
   { code: "C", label: "Chip", color: "#B8730C" },
   { code: "D", label: "Dent", color: "#B3261E" },
   { code: "P", label: "Paint / Colour Loss", color: "#8E4EC6" },
