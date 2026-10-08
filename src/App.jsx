@@ -1787,27 +1787,38 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
         )}
 
         {(isIntake || isRelease) && (
-          <Section title={isIntake ? "Factory Tyre Pressure Settings" : "Tyre Pressures — Reset to Factory"}>
+          <Section title={isIntake ? "Tyre Pressures" : "Tyre Pressures — Reset to Factory"}>
             <div className="text-xs mb-3" style={{ color: STEEL }}>
               {isIntake
-                ? "Record manufacturer factory settings on intake — use as the reference point when resetting pressures for release."
+                ? "Record the manufacturer's factory setting, and separately the pressure each tyre actually arrived on — capture it as found, even if it doesn't match factory spec. Both become the reference for later visits."
                 : "Reference the factory settings recorded on the intake report. Confirm each position has been reset before release."}
             </div>
             {TYRE_POSITIONS.map((p) => (
               <div key={p.key} className="mb-3">
                 <div className="text-xs font-semibold mb-1.5" style={{ color: INK }}>{p.label}</div>
-                <div className="grid grid-cols-3 gap-2">
-                  <TextInput value={report.tyres[p.key].factory} onChange={(v) => setTyre(p.key, "factory", v)} placeholder="Factory PSI/BAR" />
-                  <TextInput
-                    value={report.tyres[p.key].reading}
-                    onChange={(v) => setTyre(p.key, "reading", v)}
-                    placeholder={isIntake ? "Set on intake" : "Current PSI/BAR"}
-                  />
+                <div className={`grid ${isIntake ? "grid-cols-2" : "grid-cols-3"} gap-2`}>
+                  <div>
+                    <div className="text-[10px] font-semibold mb-1" style={{ color: STEEL }}>FACTORY</div>
+                    <TextInput value={report.tyres[p.key].factory} onChange={(v) => setTyre(p.key, "factory", v)} placeholder="Factory PSI/BAR" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-semibold mb-1" style={{ color: STEEL }}>
+                      {isIntake ? "CURRENT (AS ARRIVED)" : "CURRENT"}
+                    </div>
+                    <TextInput
+                      value={report.tyres[p.key].reading}
+                      onChange={(v) => setTyre(p.key, "reading", v)}
+                      placeholder={isIntake ? "e.g. 29 PSI" : "Current PSI/BAR"}
+                    />
+                  </div>
                   {isRelease && (
-                    <label className="flex items-center gap-2 text-xs rounded-lg border px-3" style={{ borderColor: LINE, color: STEEL }}>
-                      <input type="checkbox" checked={report.tyres[p.key].reset} onChange={(e) => setTyre(p.key, "reset", e.target.checked)} />
-                      Reset to factory
-                    </label>
+                    <div>
+                      <div className="text-[10px] font-semibold mb-1 opacity-0" aria-hidden="true">&nbsp;</div>
+                      <label className="flex items-center gap-2 text-xs rounded-lg border px-3 py-2.5" style={{ borderColor: LINE, color: STEEL }}>
+                        <input type="checkbox" checked={report.tyres[p.key].reset} onChange={(e) => setTyre(p.key, "reset", e.target.checked)} />
+                        Reset to factory
+                      </label>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1819,7 +1830,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
           <Section title="Tyre Pressures">
             <div className="text-xs mb-3" style={{ color: STEEL }}>
               {heldTyres
-                ? "Reference is what was set on this vehicle's last intake. Current reading turns red if it's dropped more than 5psi below that."
+                ? "Reference is what this vehicle arrived on at its last intake. Current reading turns red if it's dropped more than 5psi below that."
                 : "No intake reading on file for this vehicle yet — current readings won't be colour-checked."}
             </div>
             {TYRE_POSITIONS.map((p) => {
@@ -1833,7 +1844,7 @@ function InspectionEditor({ report, setReport, onBack, onOpenDiagram, onOpenInte
                       className="rounded-lg border px-3 py-2.5 text-[15px] flex items-center"
                       style={{ borderColor: LINE, color: intakeReading ? INK : "#9A968C", background: "#F6F5F1" }}
                     >
-                      {intakeReading || "Set on intake: —"}
+                      {intakeReading || "On arrival: —"}
                     </div>
                     <input
                       value={report.tyres[p.key].currentReading}
@@ -2804,7 +2815,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
 
             {TYRE_POSITIONS.some((p) => report.tyres[p.key].factory || report.tyres[p.key].reading) && (
               <div className="mt-3">
-                <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>FACTORY TYRE PRESSURES</div>
+                <div className="text-xs font-semibold mb-2" style={{ color: STEEL }}>TYRE PRESSURES</div>
                 <div className="space-y-1.5">
                   {TYRE_POSITIONS.map((p) => {
                     const t = report.tyres[p.key];
@@ -2819,7 +2830,7 @@ function ClientViewScreen({ report, onBack, onRespond }) {
                         <span style={{ color: STEEL }}>
                           {t.factory && `Factory: ${t.factory}`}
                           {t.factory && t.reading ? " · " : ""}
-                          {t.reading && `Set: ${t.reading}`}
+                          {t.reading && `Arrived on: ${t.reading}`}
                         </span>
                       </div>
                     );
